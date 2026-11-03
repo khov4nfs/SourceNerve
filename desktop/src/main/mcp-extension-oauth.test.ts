@@ -1,11 +1,35 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { McpExtensionClient } from "./mcp-extension-client";
-import { McpExtensionOAuthManager } from "./mcp-extension-oauth";
+import { McpExtensionOAuthManager, applyGoogleOfflineOAuthParameters } from "./mcp-extension-oauth";
 import type { EncryptedSecretStore } from "./secure-store";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("Google Workspace OAuth offline scope handling", () => {
+  it("requests offline access only for Google's official authorization endpoint", () => {
+    const google = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    google.searchParams.set("code_challenge_method", "S256");
+    applyGoogleOfflineOAuthParameters(google);
+    expect(google.searchParams.get("access_type")).toBe("offline");
+    expect(google.searchParams.get("include_granted_scopes")).toBe("true");
+    expect(google.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("does not alter third-party authorization servers or lookalike URLs", () => {
+    for (const value of [
+      "https://accounts.google.com.evil.test/o/oauth2/v2/auth",
+      "https://login.example.test/o/oauth2/v2/auth",
+      "https://accounts.google.com/not-an-oauth-endpoint",
+    ]) {
+      const authorization = new URL(value);
+      applyGoogleOfflineOAuthParameters(authorization);
+      expect(authorization.searchParams.has("access_type")).toBe(false);
+      expect(authorization.searchParams.has("include_granted_scopes")).toBe(false);
+    }
+  });
 });
 
 describe("McpExtensionOAuthManager Dynamic Client Registration", () => {
