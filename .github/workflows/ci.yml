@@ -12,6 +12,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  lockfile-diagnostic:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/workspace-free-browser-mcp-classification'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.14.0
+      - name: Resolve patched lockfile metadata (no package scripts)
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Export normalized lockfile chunks
+        run: |
+          node -e 'const fs = require("node:fs"); const data = fs.readFileSync("package-lock.json", "utf8"); for (let i = 0; i < data.length; i += 8000) console.log("LOCK_CHUNK_" + i + ":" + JSON.stringify(data.slice(i, i + 8000)));'
+
   rust:
     runs-on: ubuntu-latest
     env:
