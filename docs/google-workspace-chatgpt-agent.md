@@ -50,7 +50,7 @@ Phiên bản `@google/clasp@3.4.1` được pin để tránh thay đổi ngầm.
 
 ## 2. Apps Script: read → edit → test → push → deploy
 
-- **Discover:** dùng `mcp_extension_catalog`; xác nhận namespaced tool `clasp__list_projects` đã có, schema thực tế và trạng thái per-tool policy.
+- **Discover:** dùng `mcp_extension_catalog` → `capabilities.apps_script` (chỉ liệt kê các tool clasp đã được đăng ký và bật; `requires_external_oauth=true`). Xác nhận namespaced tool `clasp__list_projects` đã có, schema thực tế và trạng thái per-tool policy.
 - **Read:** nếu xác thực, liệt kê project rồi xác định `scriptId` và `projectDir`. `clone_project` và `pull_files` ghi file local: chọn thư mục sạch/được cấp phép, so sánh trước khi ghi.
 - **Edit:** giữ code trong Git workspace, kiểm thử lint/unit trước. Không commit credential; giữ manifest `appsscript.json` đúng scope tối thiểu.
 - **Review:** diff cụ thể, GitHub feature branch và PR. Dừng nếu remote HEAD đổi hoặc local source khác với bản đã review.
