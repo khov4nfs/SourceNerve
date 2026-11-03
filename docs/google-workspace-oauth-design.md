@@ -87,9 +87,20 @@ UI không hiển thị `Google connected = AppSheet connected`. Mỗi tài kho�
 6. Secret handling: dump logs, sandbox env, script output, Git diff không chứa Google refresh token, AppSheet key hoặc OAuth code.
 7. End-to-end: user consent, chọn Script ID, đọc code, lint/test, review, push, version/deploy, smoke test và revoke thành công.
 
+## Phần đã có trong Desktop (PR #244, chưa phát hành)
+
+- `desktop/src/main/google-workspace-manager.ts`: first-party Google Desktop OAuth (PKCE qua `McpExtensionOAuthManager`), access token được lấy nội bộ từ OS secure store; **không** materialize xuống clasp STDIO hoặc gửi token đến renderer.
+- `desktop/src/main/google-workspace-ipc.ts`, `desktop/src/shared/google-workspace-api.ts`, `desktop/src/preload.ts`: cầu Electron IPC kiểm tra trusted renderer và schema; không có đường IPC trả về token.
+- `desktop/src/renderer/components/GoogleWorkspacePanel.tsx`: giao diện tiếng Việt nhập Google OAuth Desktop Client ID, chọn quyền read/edit/deploy, duyệt consent, xem nguồn Apps Script và lưu AppSheet API key theo App ID / region.
+- `desktop/src/main/google-workspace-mcp-server.ts`: MCP server loopback với Bearer ngẫu nhiên trong bộ nhớ. SourceNerve đăng ký thành `sourcenerve-google-workspace` / namespace `google-workspace`. `apps_script_get_project`, `google_workspace_status`, `appsheet_key_status` là công cụ đọc; `apps_script_get_content` và `appsheet_find_rows` dùng Ask vì có thể trả dữ liệu nhạy cảm; `apps_script_update_content`, `apps_script_create_version`, `apps_script_create_deployment` dùng Ask, yêu cầu xác nhận bổ sung tại request. Việc cấp Google OAuth **không cấp quyền ghi tự động**.
+- `src/mcp_gateway.rs` hiển thị `capabilities.apps_script` và `capabilities.appsheet_api` cho ChatGPT theo tool thực sự đã đăng ký.
+- Apps Script API adapter đọc project/content và có optimistic full-file SHA256 check ngay trước khi overwrite. API không hỗ trợ conditional atomic update cho toàn bộ file, vì vậy vẫn có khả năng race bên ngoài giữa GET và PUT; ứng dụng phải đọc lại và review trước write. AppSheet REST adapter mới có `Find` (không sửa dữ liệu).
+
+**Lưu ý:** Đã implement code nhưng chưa có credential Google thật và AppSheet Enterprise app để test E2E. `googleStatus.connected` chỉ là token còn hiệu lực theo metadata, **chưa** xác minh account identity/scopes thực tế bằng Google API. Các lời gọi dự án thực tế sẽ báo 401/403 nếu tài khoản thiếu scope hoặc Apps Script API chưa bật.
+
 ## Phần chưa triển khai
 
-- Google Workspace OAuth connection UI và provider REST adapter cho Apps Script trong SourceNerve Desktop.
+- Google Workspace OAuth connection UI và provider REST adapter cho Apps Script trong SourceNerve Desktop. [ĐÃ CODE, CHƯA TEST E2E]
 - Cầu credential an toàn để `@google/clasp mcp` nhận authorization trong HOME biệt lập.
 - AppSheet API-key secure UI và adapter riêng theo App ID.
 - Kiểm thử thật với Google OAuth client và AppSheet app có quyền Editor/Enterprise.
