@@ -58,13 +58,10 @@ pub fn complete_known_browser_classification(
 
     let read = match operation {
         "get_console_message"
-        | "get_network_request"
         | "list_console_messages"
         | "list_network_requests"
         | "list_pages"
-        | "performance_analyze_insight"
-        | "take_screenshot"
-        | "take_snapshot" => true,
+        | "performance_analyze_insight" => true,
         "click"
         | "close_page"
         | "drag"
@@ -72,6 +69,7 @@ pub fn complete_known_browser_classification(
         | "evaluate_script"
         | "fill"
         | "fill_form"
+        | "get_network_request"
         | "handle_dialog"
         | "hover"
         | "lighthouse_audit"
@@ -83,6 +81,8 @@ pub fn complete_known_browser_classification(
         | "resize_page"
         | "select_page"
         | "take_heapsnapshot"
+        | "take_screenshot"
+        | "take_snapshot"
         | "type_text"
         | "upload_file" => false,
         _ => return hint,
