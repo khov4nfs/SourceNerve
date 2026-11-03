@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 
-import type { GoogleScriptAccessMode, GoogleWorkspaceStatus } from "../../shared/google-workspace-api";
+import type {
+  AppsScriptProjectSummary,
+  GoogleScriptAccessMode,
+  GoogleWorkspaceStatus,
+} from "../../shared/google-workspace-api";
 import { ActionButton } from "./atoms/ActionButton";
 import { InlineNotice } from "./molecules/InlineNotice";
 import { Panel } from "./Panel";
@@ -18,6 +22,9 @@ export function GoogleWorkspacePanel() {
   const [clientSecret, setClientSecret] = useState("");
   const [mode, setMode] = useState<GoogleScriptAccessMode>("read");
   const [scriptId, setScriptId] = useState("");
+  const [projects, setProjects] = useState<AppsScriptProjectSummary[]>([]);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [incompleteSearch, setIncompleteSearch] = useState(false);
   const [scriptSummary, setScriptSummary] = useState("");
   const [appId, setAppId] = useState("");
   const [region, setRegion] = useState("www.appsheet.com");
@@ -55,6 +62,15 @@ export function GoogleWorkspacePanel() {
   }
 
   const api = window.sourcenerveGoogleWorkspace;
+
+  async function fetchProjects(pageToken?: string) {
+    const result = await api.listProjects({ pageSize: 50, ...(pageToken ? { pageToken } : {}) });
+    if (!result.ok) throw new Error(result.error.message);
+    setProjects((existing) => pageToken ? [...existing, ...result.value.projects] : result.value.projects);
+    setNextPageToken(result.value.nextPageToken);
+    setIncompleteSearch(result.value.incompleteSearch);
+    setMessage(pageToken ? "Đã tải thêm một trang Apps Script." : "Đã đọc danh sách Apps Script từ Google Drive metadata.");
+  }
 
   return (
     <Panel title="Google Workspace" eyebrow="OAuth Apps Script · AppSheet API key">
@@ -96,6 +112,8 @@ export function GoogleWorkspacePanel() {
                 const response = await api.configure(clientId.trim(), mode, clientSecret || undefined);
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
+                setProjects([]);
+                setNextPageToken(null);
                 setMessage("Đã lưu OAuth Desktop Client và phạm vi quyền. Đổi scope sẽ yêu cầu consent lại; chưa tự cấp quyền.");
                 setClientId("");
                 setClientSecret("");
@@ -113,8 +131,70 @@ export function GoogleWorkspacePanel() {
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
                 setScriptSummary("");
+                setProjects([]);
+                setNextPageToken(null);
                 setMessage("Đã ngắt và thu hồi kết nối Google.");
               })}>Ngắt kết nối</ActionButton>
+          </div>
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Danh sách Apps Script từ Google Drive</p>
+            <p className="text-xs text-muted-foreground">
+              Chỉ đọc metadata (tên, Script ID, thời gian sửa). Google Drive chỉ liệt kê các script
+              độc lập; script gắn với Sheets/Docs/Forms không xuất hiện trong kết quả này.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {status?.projectDiscoveryEnabled
+                ? "Đã bật quyền Drive metadata.readonly"
+                : "Chưa cấp quyền Drive metadata.readonly"}
+            </p>
+            {!status?.projectDiscoveryEnabled && (
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status?.configured}
+                onClick={() => void perform("discovery-consent", async () => {
+                  const enabled = await api.enableProjectDiscovery();
+                  if (!enabled.ok) throw new Error(enabled.error.message);
+                  setStatus(enabled.value);
+                  setProjects([]);
+                  setNextPageToken(null);
+                  const connected = await api.connect();
+                  if (!connected.ok) throw new Error(connected.error.message);
+                  setStatus(connected.value);
+                  setMessage("Đã cấp lại OAuth với quyền Drive metadata.readonly. Có thể liệt kê Apps Script.");
+                })}>Cấp quyền Drive metadata và ủy quyền lại</ActionButton>
+            )}
+            {status?.projectDiscoveryEnabled && (
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status.connected}
+                onClick={() => void perform("discovery-list", async () => {
+                  await fetchProjects();
+                })}>Liệt kê Apps Script</ActionButton>
+            )}
+            {projects.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">{projects.length} dự án đã tải</p>
+                <ul className="space-y-2">
+                  {projects.map((project) => (
+                    <li className="rounded border border-border p-2" key={project.scriptId}>
+                      <a className="text-sm underline break-words" href={project.editorUrl}
+                        target="_blank" rel="noopener noreferrer">{project.name}</a>
+                      <p className="text-xs text-muted-foreground break-all">Script ID: {project.scriptId}</p>
+                      <p className="text-xs text-muted-foreground">Cập nhật: {project.modifiedTime ?? "Không có dữ liệu"}</p>
+                      <ActionButton size="sm" variant="secondary"
+                        onClick={() => setScriptId(project.scriptId)}>Chọn Script ID</ActionButton>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {incompleteSearch && (
+              <InlineNotice tone="info" title="Drive">{ "Google Drive chưa tìm kiếm hết tất cả khu vực Drive; danh sách có thể chưa đầy đủ." }</InlineNotice>
+            )}
+            {nextPageToken && (
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
+                onClick={() => void perform("discovery-more", async () => {
+                  await fetchProjects(nextPageToken);
+                })}>Tải thêm</ActionButton>
+            )}
           </div>
           <label className="block text-xs space-y-1">
             <span>Apps Script ID (project được bạn chọn)</span>
