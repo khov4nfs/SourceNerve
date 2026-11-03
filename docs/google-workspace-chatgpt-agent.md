@@ -12,6 +12,25 @@ Tài liệu triển khai bước tiếp theo sau PR #241 (Browser / Computer Use
 | Computer Use | SourceNerve Desktop Control | Ảnh màn hình và foreground fallback | Chỉ khi người dùng cho phép foreground interaction |
 | AppSheet REST API | REST API theo App ID | Bảng dữ liệu Add/Edit/Delete/Find, invoke Actions | Không cung cấp cách sửa toàn bộ cấu hình Editor qua API |
 
+## Luồng đề xuất sau PR #244: first-party OAuth + SourceNerve MCP
+
+Bản Desktop có Google Workspace panel (Plugins + MCP → Google Workspace):
+
+1. Nhập **Google Cloud Desktop OAuth Client ID** của app do người dùng kiểm soát, chọn scope mode `read` / `edit` / `deploy` (mặc định `read`).
+2. Chọn `Đăng nhập Google`: Desktop mở trình duyệt hệ thống, PKCE + 127.0.0.1 loopback; OS secure store giữ token. SourceNerve không đẩy token xuống clasp STDIO.
+3. Khi `sourcenerve-google-workspace` đã được SourceNerve MCP gateway đăng ký, `mcp_extension_catalog` cung cấp namespace `google-workspace` và `capabilities.apps_script` / `capabilities.appsheet_api`. Các tool có thể sử dụng:
+   - `google_workspace_status` và `apps_script_get_project`: read-only.
+   - `apps_script_get_content`: Ask vì nội dung source có thể nhạy cảm.
+   - `apps_script_update_content`: Ask + full-file replacement + expected SHA256 fingerprint + `confirmed=true`.
+   - `apps_script_create_version`, `apps_script_create_deployment`: Ask + quyền thích hợp + xác nhận + version đích.
+   - `appsheet_key_status`, `appsheet_find_rows`: key được lưu tại Desktop; `Find` dùng Ask vì trả dữ liệu bảng.
+4. AppSheet REST key được nhập riêng cho App ID và vùng dữ liệu Global/EU/Asia Pacific; AppSheet Editor vẫn cần một phiên Browser Use đã đăng nhập, không thể thay bằng key.
+5. Không khởi chạy deploy tự động sau khi đọc dự án. SourceNerve vẫn thực hiện approval trước từng tool write; thao tác Google có timeout không được replay khi không biết kết quả.
+
+**Chưa xác thực trên dữ liệu thật và chưa deploy:** Cần OAuth client hợp lệ, consent, Apps Script API enabled, đúng Script ID và (đối với AppSheet REST) ứng dụng Enterprise cùng key có hiệu lực.
+
+### clasp MCP (tùy chọn, riêng biệt)
+
 ## 1. Chuẩn bị clasp MCP
 
 SourceNerve có registry và gateway cho extension STDIO. Mẫu cấu hình:
