@@ -109,7 +109,6 @@ export class GoogleWorkspaceMcpServer {
     const listed = await this.client.list();
     if (!Array.isArray(listed)) throw new Error("Invalid MCP extension registry");
     let current = listed.find((item) => asRecord(item)?.id === ID) as Record<string, unknown> | undefined;
-    const original = current;
     if (current && !this.matchesRegistration(current)) {
       if (current.namespace !== NAMESPACE || current.source !== SOURCE) {
         throw new Error("Google Workspace extension ID is owned by another provider");
@@ -130,7 +129,9 @@ export class GoogleWorkspaceMcpServer {
     if (freshlyRegistered || !current?.credential_materialized) {
       await this.client.materializeCredential(ID, this.credential);
     }
-    if (freshlyRegistered || !current?.enabled) await this.client.enable(ID);
+    // A user-disabled extension remains disabled on reconciliation. A new
+    // endpoint/reinstallation is a distinct registration and gets safe defaults.
+    if (freshlyRegistered) await this.client.enable(ID);
     // Respect user-chosen policy for a previously registered extension.
     if (freshlyRegistered) {
       const tools = await this.client.listTools(ID);
@@ -142,7 +143,6 @@ export class GoogleWorkspaceMcpServer {
         });
       }
     }
-    void original;
   }
 
   async stop(): Promise<void> {
@@ -320,15 +320,15 @@ function toolResult(value: unknown, isError: boolean) {
   };
 }
 function rpcResult(response: ServerResponse, id: string | number | null | undefined, result: unknown): void {
-  send(response, 200, { jsonrpc: "2.0", id: id ?? null, result }, "text/event-stream");
+  send(response, 200, { jsonrpc: "2.0", id: id ?? null, result });
 }
 function rpcError(response: ServerResponse, id: string | number | null | undefined, code: number, message: string): void {
   send(response, 200, { jsonrpc: "2.0", id: id ?? null, error: { code, message } }, "application/json");
 }
-function send(response: ServerResponse, status: number, body: unknown, mime = "application/json"): void {
+function send(response: ServerResponse, status: number, body: unknown): void {
   const data = Buffer.from(JSON.stringify(body));
   response.writeHead(status, {
-    "content-type": mime === "text/event-stream" ? "application/json" : mime,
+    "content-type": "application/json; charset=utf-8",
     "content-length": data.length,
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
