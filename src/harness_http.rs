@@ -977,6 +977,7 @@ mod tests {
             request_id: "bang-1".into(),
             timeout_ms: Some(120_000),
             cwd: None,
+            env_file: None,
         };
         assert!(validate_harness_command_request(&valid).is_ok());
 
@@ -1020,6 +1021,7 @@ mod tests {
             request_id: "bang-1".into(),
             timeout_ms: Some(120_000),
             cwd: Some("desktop/src".into()),
+            env_file: None,
         };
         assert!(validate_harness_command_request(&base).is_ok());
 
