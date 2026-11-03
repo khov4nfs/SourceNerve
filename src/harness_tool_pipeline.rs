@@ -1472,7 +1472,7 @@ pub async fn begin(
             .await?;
         prune(state).await?;
         return Err(AppError::InvalidRequest(format!(
-            "harness approval required: approval_id={} capability=`{capability_id}` expires_at={}",
+            "⚠️ APPROVAL REQUIRED: harness approval required: approval_id={} capability=`{capability_id}` expires_at={}. Please prompt the user in the visible chat to allow or deny this action, then respond with harness_approval_respond.",
             approval.id, approval.expires_at
         )));
     }
