@@ -308,7 +308,8 @@ function validScriptFile(value: unknown): value is AppsScriptFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const file = value as Record<string, unknown>;
   return typeof file.name === "string" && file.name.length >= 1 && file.name.length <= 128 &&
-    file.name !== "." && file.name !== ".." && !/[/\\\\\r\n\0]/.test(file.name) &&
+    file.name !== "." && file.name !== ".." && !file.name.includes("/") &&
+    !file.name.includes("\\") && !/[\r\n\0]/.test(file.name) &&
     (file.type === "SERVER_JS" || file.type === "JSON" || file.type === "HTML") &&
     typeof file.source === "string" && Buffer.byteLength(file.source) <= MAX_RESPONSE_BYTES;
 }
