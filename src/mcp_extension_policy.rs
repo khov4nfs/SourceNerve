@@ -39,6 +39,66 @@ pub struct ToolClassification {
     pub open_world: Option<bool>,
 }
 
+/// Fill in missing classification metadata for recognized Chrome DevTools tools.
+///
+/// Browsing does not require a Git workspace. This is classification ONLY:
+/// the existing per-tool enabled/approval policy and desktop permissions remain
+/// authoritative. Unknown tools retain their original (possibly incomplete)
+/// metadata and are not silently enabled.
+pub fn complete_known_browser_classification(
+    public_name: &str,
+    hint: ToolClassification,
+) -> ToolClassification {
+    let Some((namespace, operation)) = public_name.rsplit_once("__") else {
+        return hint;
+    };
+    if !namespace.starts_with("chrome-devtools-mcp-") {
+        return hint;
+    }
+
+    let read = match operation {
+        "get_console_message"
+        | "get_network_request"
+        | "list_console_messages"
+        | "list_network_requests"
+        | "list_pages"
+        | "performance_analyze_insight"
+        | "take_screenshot"
+        | "take_snapshot" => true,
+        "click"
+        | "close_page"
+        | "drag"
+        | "emulate"
+        | "evaluate_script"
+        | "fill"
+        | "fill_form"
+        | "handle_dialog"
+        | "hover"
+        | "lighthouse_audit"
+        | "navigate_page"
+        | "new_page"
+        | "performance_start_trace"
+        | "performance_stop_trace"
+        | "press_key"
+        | "resize_page"
+        | "select_page"
+        | "take_heapsnapshot"
+        | "type_text"
+        | "upload_file" => false,
+        _ => return hint,
+    };
+
+    // Conflicting downstream hints must never turn an interactive browser
+    // operation into a read-only tool.
+    let read_only = read && hint.read_only != Some(false) && hint.destructive != Some(true);
+    ToolClassification {
+        read_only: Some(read_only),
+        destructive: Some(!read_only),
+        idempotent: Some(read_only && hint.idempotent != Some(false)),
+        open_world: Some(true),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolPolicy {
     pub enabled: bool,
@@ -350,6 +410,46 @@ mod tests {
                 .destructive,
             Some(true)
         );
+    }
+
+    #[test]
+    fn recognized_browser_tools_have_complete_safety_metadata() {
+        let read = complete_known_browser_classification(
+            "chrome-devtools-mcp-6f0fffa__list_pages",
+            ToolClassification::default(),
+        );
+        assert_eq!(read.read_only, Some(true));
+        assert_eq!(read.destructive, Some(false));
+        assert_eq!(read.idempotent, Some(true));
+        assert_eq!(read.open_world, Some(true));
+
+        let interactive = complete_known_browser_classification(
+            "chrome-devtools-mcp-6f0fffa__evaluate_script",
+            ToolClassification {
+                read_only: Some(true),
+                destructive: Some(false),
+                idempotent: Some(true),
+                open_world: Some(false),
+            },
+        );
+        assert_eq!(interactive.read_only, Some(false));
+        assert_eq!(interactive.destructive, Some(true));
+        assert_eq!(interactive.idempotent, Some(false));
+        assert_eq!(interactive.open_world, Some(true));
+    }
+
+    #[test]
+    fn unknown_browser_operations_keep_conservative_metadata() {
+        let unknown = ToolClassification::default();
+        assert_eq!(
+            complete_known_browser_classification("chrome-devtools-mcp-6f0fffa__unknown", unknown),
+            unknown,
+        );
+        assert_eq!(
+            complete_known_browser_classification("another-extension__list_pages", unknown),
+            unknown,
+        );
+        assert_eq!(evaluate_tool_policy(None, true), PolicyDecision::Deny);
     }
 
     #[test]
