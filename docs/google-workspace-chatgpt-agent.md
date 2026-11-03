@@ -12,6 +12,13 @@ Tài liệu triển khai bước tiếp theo sau PR #241 (Browser / Computer Use
 | Computer Use | SourceNerve Desktop Control | Ảnh màn hình và foreground fallback | Chỉ khi người dùng cho phép foreground interaction |
 | AppSheet REST API | REST API theo App ID | Bảng dữ liệu Add/Edit/Delete/Find, invoke Actions | Không cung cấp cách sửa toàn bộ cấu hình Editor qua API |
 
+## Liệt kê Apps Script projects (Drive metadata-only)
+
+Trong SourceNerve Desktop chọn **Google Workspace → Cấp quyền Drive metadata và ủy quyền lại**.
+OAuth sẽ yêu cầu thêm scope `drive.metadata.readonly` (restricted scope, có thể cần Google verification) và giữ lại các quyền Apps Script đã chọn. Việc nâng scope là opt-in, xóa token cũ rồi yêu cầu consent mới; không đòi nhập lại Google Desktop OAuth Client ID.
+
+Sau khi consent, ChatGPT dùng `google-workspace__apps_script_list_projects` (MCP read) với `pageSize` 1..100 và `pageToken` tùy chọn. Kết quả có `projects: [{name, scriptId, modifiedTime, editorUrl}]`, `nextPageToken`, `incompleteSearch`. Công cụ này chỉ liệt kê **standalone scripts** trong Google Drive, không liệt kê script gắn Sheets/Docs/Forms/Slides. Xem `docs/google-workspace-script-discovery.md` để biết quy tắc quyền và phân trang.
+
 ## Luồng đề xuất sau PR #244: first-party OAuth + SourceNerve MCP
 
 Bản Desktop có Google Workspace panel (Plugins + MCP → Google Workspace):

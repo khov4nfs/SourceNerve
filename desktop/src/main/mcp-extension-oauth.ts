@@ -153,6 +153,7 @@ export class McpExtensionOAuthManager {
       if (config.scopes.length > 0) authorization.searchParams.set("scope", config.scopes.join(" "));
       if (config.resource) authorization.searchParams.set("resource", config.resource);
       applyGoogleOfflineOAuthParameters(authorization);
+      applyGoogleWorkspaceConsentParameters(authorization, extensionId);
 
       await this.openExternal(authorization.toString());
       const callbackUrl = await loopback.callback;
@@ -404,6 +405,19 @@ export function applyGoogleOfflineOAuthParameters(authorization: URL): void {
     authorization.searchParams.set("access_type", "offline");
     // Installed applications must re-consent to changed scope sets. Google
     // does not support incremental authorization for native Desktop clients.
+  }
+}
+
+/**
+ * Google Workspace Desktop permission changes require a new consent.
+ * Only affect SourceNerve's first-party Google connection, not other MCPs.
+ */
+export function applyGoogleWorkspaceConsentParameters(authorization: URL, extensionId: string): void {
+  if (extensionId === "google-workspace" &&
+      authorization.protocol === "https:" &&
+      authorization.hostname === "accounts.google.com" &&
+      authorization.pathname === "/o/oauth2/v2/auth") {
+    authorization.searchParams.set("prompt", "consent");
   }
 }
 

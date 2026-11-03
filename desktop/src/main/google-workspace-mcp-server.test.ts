@@ -32,6 +32,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       listTools: vi.fn(async () => [
         { original_name: "google_workspace_status" },
         { original_name: "apps_script_get_content" },
+        { original_name: "apps_script_list_projects" },
         { original_name: "apps_script_update_content" },
         { original_name: "apps_script_create_deployment" },
         { original_name: "appsheet_find_rows" },
@@ -42,7 +43,19 @@ describe("Google Workspace first-party MCP gateway", () => {
       remove: vi.fn(async () => { record = null; }),
     } as unknown as McpExtensionClient;
     const manager = {
-      googleStatus: vi.fn(async () => ({ configured: false, connected: false, mode: null })),
+      googleStatus: vi.fn(async () => ({
+        configured: false, connected: false, mode: null, projectDiscoveryEnabled: false,
+      })),
+      listAppsScriptProjects: vi.fn(async () => ({
+        projects: [{
+          scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+          name: "Example project",
+          modifiedTime: "2026-11-04T00:00:00.000Z",
+          editorUrl: "https://script.google.com/d/abcdefghijklmnopqrstuvwxy1234567890/edit",
+        }],
+        nextPageToken: "page2",
+        incompleteSearch: false,
+      })),
     } as unknown as GoogleWorkspaceManager;
     const server = new GoogleWorkspaceMcpServer({ manager, client, version: "0.1.44" });
     await server.start();
@@ -53,6 +66,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(policies.find((p) => p.toolName === "apps_script_create_deployment")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "appsheet_find_rows")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "google_workspace_status")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_list_projects")?.approval).toBe("automatic");
 
       const send = async (authorization: string, method: string, params: Record<string, unknown> = {}) => {
         return fetch(server.url(), {
@@ -68,6 +82,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(allowed.status).toBe(200);
       const catalog = await allowed.json() as { result: { tools: Array<{ name: string }> } };
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_get_content")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_projects")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "appsheet_key_set")).toBe(false);
 
       const result = await send(`Bearer ${credential}`, "tools/call", {
@@ -77,6 +92,18 @@ describe("Google Workspace first-party MCP gateway", () => {
       const payload = await result.json() as { result: { structuredContent: { configured: boolean } } };
       expect(payload.result.structuredContent.configured).toBe(false);
       expect(manager.googleStatus).toHaveBeenCalledTimes(1);
+
+      const listed = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_list_projects",
+        arguments: { pageSize: 20, pageToken: "page1" },
+      });
+      expect(listed.status).toBe(200);
+      const listing = await listed.json() as {
+        result: { structuredContent: { projects: Array<{ name: string }>; nextPageToken: string } };
+      };
+      expect(listing.result.structuredContent.projects[0].name).toBe("Example project");
+      expect(listing.result.structuredContent.nextPageToken).toBe("page2");
+      expect(manager.listAppsScriptProjects).toHaveBeenCalledWith({ pageSize: 20, pageToken: "page1" });
 
       // A user's disable decision must not be undone by periodic discovery.
       await client.disable("sourcenerve-google-workspace");

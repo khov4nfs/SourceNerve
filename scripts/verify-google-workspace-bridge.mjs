@@ -72,6 +72,7 @@ assert.equal(oauthPolicy.consent, "explicit_scope_mode_reconsent_for_desktop");
 assert.ok(oauthPolicy.scope_sets.apps_script_read.includes("https://www.googleapis.com/auth/script.projects.readonly"));
 assert.ok(oauthPolicy.scope_sets.apps_script_edit.includes("https://www.googleapis.com/auth/script.projects"));
 assert.ok(oauthPolicy.scope_sets.apps_script_deploy.includes("https://www.googleapis.com/auth/script.deployments"));
+assert.deepEqual(oauthPolicy.scope_sets.apps_script_discovery_opt_in, ["https://www.googleapis.com/auth/drive.metadata.readonly"]);
 assert.ok(!JSON.stringify(oauthPolicy.scope_sets).includes("https://www.googleapis.com/auth/drive\""));
 for (const requirement of ["PKCE", "ApplicationAccessKey", "clasp", "OS EncryptedSecretStore", "oauth2.googleapis.com/revoke", "không"]) {
   assert.ok(oauthDesign.includes(requirement), `OAuth design must document ${requirement}`);

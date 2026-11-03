@@ -13,6 +13,7 @@ const MAX_REQUEST_BYTES = 2 * 1024 * 1024 + 16 * 1024;
 
 type ToolName =
   | "google_workspace_status"
+  | "apps_script_list_projects"
   | "apps_script_get_project"
   | "apps_script_get_content"
   | "apps_script_update_content"
@@ -32,6 +33,10 @@ const APP_ID = { type: "string", minLength: 8, maxLength: 128, pattern: "^[A-Za-
 const REGION = { type: "string", enum: ["www.appsheet.com", "eu.appsheet.com", "asia-southeast.appsheet.com"] };
 const TOOL_DEFINITIONS: Definition[] = [
   definition("google_workspace_status", "Read Google OAuth status and scope mode, never return tokens", {}, [], false),
+  definition("apps_script_list_projects", "List standalone Apps Script project names, IDs, modified times and Editor links using read-only Google Drive metadata; requires explicit OAuth re-consent, returns one page", {
+    pageSize: { type: "integer", minimum: 1, maximum: 100 },
+    pageToken: { type: "string", minLength: 1, maxLength: 4096 },
+  }, [], false),
   definition("apps_script_get_project", "Read metadata for one explicitly selected Google Apps Script project", { scriptId: SCRIPT_ID }, ["scriptId"], false),
   definition("apps_script_get_content", "Read Apps Script source files and manifest for one explicit script ID; project source may contain sensitive data", { scriptId: SCRIPT_ID }, ["scriptId"], false, "ask"),
   definition("apps_script_update_content", "Overwrite all Apps Script HEAD files ONLY after reviewing full file list, matching a freshly read SHA-256 fingerprint and receiving explicit confirmation; never retry on timeout", {
@@ -220,6 +225,10 @@ export class GoogleWorkspaceMcpServer {
   private async callTool(name: ToolName, args: Record<string, unknown>): Promise<unknown> {
     switch (name) {
       case "google_workspace_status": return this.manager.googleStatus();
+      case "apps_script_list_projects": return this.manager.listAppsScriptProjects({
+        ...(args.pageSize === undefined ? {} : { pageSize: requirePageSize(args.pageSize) }),
+        ...(args.pageToken === undefined ? {} : { pageToken: requiredString(args.pageToken, "pageToken", 4096) }),
+      });
       case "apps_script_get_project": return this.manager.getAppsScriptProject(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_get_content": return this.manager.getAppsScriptContent(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_update_content": {
@@ -279,6 +288,12 @@ function requiredString(value: unknown, field: string, max: number): string {
     throw new Error(`Invalid Google Workspace ${field}`);
   }
   return value;
+}
+function requirePageSize(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 100) {
+    throw new Error("Invalid Apps Script pageSize");
+  }
+  return value as number;
 }
 function optionalDescription(value: unknown): string {
   if (value === undefined) return "";
