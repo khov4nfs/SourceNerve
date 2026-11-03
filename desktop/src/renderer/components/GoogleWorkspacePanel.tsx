@@ -123,6 +123,11 @@ export function GoogleWorkspacePanel() {
                 const response = await api.connect();
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
+                // The next OAuth consent may select a different Google account.
+                // Never keep showing project metadata from the prior identity.
+                setProjects([]);
+                setNextPageToken(null);
+                setScriptSummary("");
                 setMessage("Đã nhận phản hồi OAuth. Hãy kiểm tra quyền API trên tài khoản Google.");
               })}>Đăng nhập Google</ActionButton>
             <ActionButton size="sm" variant="destructive" disabled={Boolean(busy) || !status?.connected}
