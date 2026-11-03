@@ -801,6 +801,16 @@ mod tests {
 
         admin_post(
             &base,
+            "/api/v1/mcp/extensions/restart",
+            bearer,
+            serde_json::json!({"extension_id": extension_id}),
+        )
+        .await;
+        let restarted = admin_get_json(&base, "/api/v1/mcp/extensions/health", bearer).await;
+        assert_eq!(restarted[0]["session_state"], "connected");
+
+        admin_post(
+            &base,
             "/api/v1/mcp/extensions/disable",
             bearer,
             serde_json::json!({"extension_id": extension_id}),
