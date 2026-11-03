@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -89,6 +89,7 @@ export class WorkspaceManager {
       );
     }
 
+    await ensureGitRepository(selectedPath);
     const inspection = await inspectRepository(selectedPath);
     const selectionId = randomUUID();
     this.pendingSelections.set(selectionId, {
@@ -145,6 +146,7 @@ export class WorkspaceManager {
       );
     }
 
+    await ensureGitRepository(root);
     const inspection = await inspectRepository(root, input.remote, input.defaultBranch);
     if (input.access === "read-write" && !inspection.localWritable) {
       throw new WorkspaceManagerError(
@@ -276,6 +278,88 @@ export class WorkspaceManager {
       }
       await delay(DAEMON_STABLE_POLL_MS);
     }
+  }
+}
+
+export async function ensureGitRepository(selectedPath: string): Promise<void> {
+  let canonical: string;
+  try {
+    canonical = await realpath(selectedPath);
+  } catch {
+    return;
+  }
+  const isDir = await isDirectory(canonical);
+  if (!isDir) return;
+
+  const topLevelRaw = await gitOptional(canonical, ["rev-parse", "--show-toplevel"]);
+  if (topLevelRaw) {
+    let topLevel: string;
+    try {
+      topLevel = await realpath(topLevelRaw.trim());
+    } catch {
+      topLevel = topLevelRaw.trim();
+    }
+    if (topLevel !== canonical) {
+      return;
+    }
+    const hasHead = await gitExitSuccess(canonical, ["rev-parse", "--verify", "HEAD"]);
+    if (!hasHead) {
+      await ensureGitUser(canonical);
+      await gitOptional(canonical, ["commit", "--allow-empty", "-m", "chore: initialize workspace"]);
+    }
+    const remotes = (await gitOptional(canonical, ["remote"]))?.trim();
+    if (!remotes) {
+      const slug = suggestWorkspaceId(path.basename(canonical));
+      await gitOptional(canonical, ["remote", "add", "origin", `https://github.com/local/${slug}.git`]);
+    }
+    return;
+  }
+
+  try {
+    await gitRequired(canonical, ["init", "-b", "main"], "Failed to initialize Git repository.");
+  } catch {
+    await gitRequired(canonical, ["init"], "Failed to initialize Git repository.");
+    await gitOptional(canonical, ["branch", "-M", "main"]);
+  }
+  await ensureGitUser(canonical);
+
+  try {
+    const gitignorePath = path.join(canonical, ".gitignore");
+    const hasGitignore = await fileExists(gitignorePath);
+    if (!hasGitignore) {
+      const entries = await readdir(canonical, { withFileTypes: true });
+      const hasSubDirs = entries.some((entry) => entry.isDirectory());
+      if (hasSubDirs) {
+        await writeFile(gitignorePath, "*\n!.gitignore\n", "utf8");
+        await gitOptional(canonical, ["add", ".gitignore"]);
+      }
+    }
+  } catch {
+    // Ignore error creating gitignore
+  }
+
+  await gitOptional(canonical, ["commit", "--allow-empty", "-m", "chore: initialize workspace"]);
+  const slug = suggestWorkspaceId(path.basename(canonical));
+  await gitOptional(canonical, ["remote", "add", "origin", `https://github.com/local/${slug}.git`]);
+}
+
+async function ensureGitUser(root: string): Promise<void> {
+  const hasUser = await gitExitSuccess(root, ["config", "user.name"]);
+  if (!hasUser) {
+    await gitOptional(root, ["config", "user.name", "SourceNerve User"]);
+  }
+  const hasEmail = await gitExitSuccess(root, ["config", "user.email"]);
+  if (!hasEmail) {
+    await gitOptional(root, ["config", "user.email", "user@sourcenerve.local"]);
+  }
+}
+
+async function isDirectory(targetPath: string): Promise<boolean> {
+  try {
+    const info = await stat(targetPath);
+    return info.isDirectory();
+  } catch {
+    return false;
   }
 }
 

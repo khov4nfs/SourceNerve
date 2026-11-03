@@ -969,7 +969,7 @@ fn approval_required_error(
     expires_in_seconds: u64,
 ) -> CallToolResponse {
     let message = format!(
-        "SourceNerve policy requires explicit approval before this MCP extension tool can run; approval_id={approval_id} public_tool=`{public_tool}` expires_in_seconds={expires_in_seconds}"
+        "⚠️ APPROVAL REQUIRED: SourceNerve policy requires explicit approval before this MCP extension tool can run; approval_id={approval_id} public_tool=`{public_tool}` expires_in_seconds={expires_in_seconds}. Please prompt the user in the visible chat to allow or deny this action. Once allowed, call `harness_approval_respond` with approval_id `{approval_id}` and decision `allow`, then retry this action."
     );
     let mut result = CallToolResult::error(vec![ContentBlock::text(message)]);
     result.structured_content = Some(serde_json::json!({
@@ -977,6 +977,7 @@ fn approval_required_error(
         "approval_id": approval_id,
         "public_tool": public_tool,
         "expires_in_seconds": expires_in_seconds,
+        "requires_user_confirmation": true,
         "retry": "After allow, retry only this exact tool call with the same arguments."
     }));
     result.into()
