@@ -87,6 +87,10 @@ UI không hiển thị `Google connected = AppSheet connected`. Mỗi tài kho�
 6. Secret handling: dump logs, sandbox env, script output, Git diff không chứa Google refresh token, AppSheet key hoặc OAuth code.
 7. End-to-end: user consent, chọn Script ID, đọc code, lint/test, review, push, version/deploy, smoke test và revoke thành công.
 
+## Phát hiện Apps Script projects (PR tiếp theo, sau v0.1.45)
+
+Thêm `apps_script_list_projects` từ Drive API v3 với `drive.metadata.readonly` **opt-in**. Trên Desktop, hành động `enableProjectDiscovery` giữ nguyên scope Apps Script read/edit/deploy, xóa token cũ và yêu cầu PKCE consent lại (Google Desktop không hỗ trợ incremental auth). Kết quả chỉ gồm tên, Script ID, thời gian cập nhật và liên kết Editor cho standalone scripts, có `nextPageToken`. Không dùng Drive content read scope, không liệt kê bound scripts không hiện trong Drive. Xem `docs/google-workspace-script-discovery.md` và lưu ý restricted scope cần Google Cloud review tùy mô hình phát hành.
+
 ## Phần đã có trong Desktop (PR #244, chưa phát hành)
 
 - `desktop/src/main/google-workspace-manager.ts`: first-party Google Desktop OAuth (PKCE qua `McpExtensionOAuthManager`), hỗ trợ client secret tùy chọn được lưu riêng trong OS secure store khi cấu hình Google yêu cầu; access token được lấy nội bộ từ OS secure store; **không** materialize xuống clasp STDIO hoặc gửi token đến renderer.
