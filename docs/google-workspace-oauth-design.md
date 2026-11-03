@@ -1,6 +1,6 @@
 # SourceNerve Google OAuth / Apps Script / AppSheet — thiết kế ủy quyền
 
-**Trạng thái:** Design + policy contract; **chưa** phải OAuth connection đang hoạt động. SourceNerve Desktop hiện có `McpExtensionOAuthManager` với PKCE/loopback và encrypted secret store. Đã bổ sung lựa chọn `access_type=offline` và `include_granted_scopes=true` riêng cho URL Google OAuth chính thức để chuẩn bị refresh token, có unit test chống áp dụng cho provider khác. Tuy vậy cơ chế hiện tại materialize **Bearer token vào HTTP MCP transport**; `@google/clasp mcp` là STDIO và yêu cầu credentials riêng trong HOME. Không được mô tả `OAuth connected` cho clasp chỉ vì đã lấy được token.
+**Trạng thái:** Design + policy contract; **chưa** phải OAuth connection đang hoạt động. SourceNerve Desktop hiện có `McpExtensionOAuthManager` với PKCE/loopback và encrypted secret store. Đã bổ sung `access_type=offline` cho URL Google OAuth chính thức để chuẩn bị refresh token, có unit test chống áp dụng cho provider khác. `include_granted_scopes` không được dùng vì OAuth Desktop không hỗ trợ incremental consent. Tuy vậy cơ chế hiện tại materialize **Bearer token vào HTTP MCP transport**; `@google/clasp mcp` là STDIO và yêu cầu credentials riêng trong HOME. Không được mô tả `OAuth connected` cho clasp chỉ vì đã lấy được token.
 
 ## Tách ba loại quyền
 
@@ -38,7 +38,7 @@ ChatGPT Chat (tiếng Việt)
 
 1. Người dùng vào **SourceNerve → Settings → Google Workspace → Connect Google** (UI đề xuất, chưa xây dựng) và chọn tài khoản Google. Không mặc định tái sử dụng danh tính GitHub hay Google Drive connector.
 2. Desktop Main nhận Google Cloud **Desktop OAuth Client ID** qua cấu hình/secure install; xác minh ID thuộc ứng dụng SourceNerve đã cấu hình; không đưa client secret vào frontend hoặc repo. External OAuth app cần cấu hình consent screen, test users/verification theo yêu cầu Google.
-3. Desktop tạo state (ít nhất 256-bit), PKCE verifier và SHA256 challenge S256. Bind listener tạm thời ở `127.0.0.1` cổng ngẫu nhiên; không dùng callback công khai trên Cloudflare MCP tunnel. Gọi URL Google `accounts.google.com/o/oauth2/v2/auth` có `response_type=code`, `state`, `code_challenge`, `code_challenge_method=S256`, `access_type=offline` và scope yêu cầu theo tác vụ.
+3. Desktop tạo state (ít nhất 256-bit), PKCE verifier và SHA256 challenge S256. Bind listener tạm thời ở `127.0.0.1` cổng ngẫu nhiên; không dùng callback công khai trên Cloudflare MCP tunnel. Gọi URL Google `accounts.google.com/o/oauth2/v2/auth` có `response_type=code`, `state`, `code_challenge`, `code_challenge_method=S256`, `access_type=offline` và scope yêu cầu theo chế độ đã chọn. Google Desktop không hỗ trợ incremental authorization: khi đổi từ read sang edit/deploy phải yêu cầu consent lại, không tự nâng scope trong nền.
 4. Mở trình duyệt hệ thống; người dùng trực tiếp duyệt scope. Listener xác thực loopback peer, đường callback, state, một lần sử dụng, thời gian hết hạn; đổi code tại `oauth2.googleapis.com/token` với `code_verifier`, không log URL có mã hoặc token.
 5. Lưu refresh token và thông tin account **chỉ** trong OS encrypted secret store. Access token ngắn hạn được giữ trong bộ nhớ hoặc secure store, gắn với connection/account/scope; không chia sẻ vào ChatGPT tool result, `.env`, Git, shell, renderer hoặc browser JavaScript.
 6. Kiểm tra `granted_scopes` thực tế, account identity và Apps Script API readiness trước khi hiện `Apps Script connected`. Nếu thiếu scope, cần incremental consent; không tự nâng quyền.
@@ -47,7 +47,7 @@ ChatGPT Chat (tiếng Việt)
 
 ### Các cấp quyền OAuth
 
-Được khai báo ở `integrations/google-workspace/google-oauth.policy.json`, không yêu cầu toàn bộ scopes ngay khi kết nối:
+Được khai báo ở `integrations/google-workspace/google-oauth.policy.json`, các chế độ quyền được chọn rõ trước khi kết nối; đổi chế độ sẽ vô hiệu hóa token cũ và yêu cầu consent lại:
 
 - Nhận diện: `openid`, `userinfo.email` nếu cần xác nhận đúng tài khoản.
 - Đọc script: `script.projects.readonly`, `script.deployments.readonly`.
@@ -89,7 +89,7 @@ UI không hiển thị `Google connected = AppSheet connected`. Mỗi tài kho�
 
 ## Phần đã có trong Desktop (PR #244, chưa phát hành)
 
-- `desktop/src/main/google-workspace-manager.ts`: first-party Google Desktop OAuth (PKCE qua `McpExtensionOAuthManager`), access token được lấy nội bộ từ OS secure store; **không** materialize xuống clasp STDIO hoặc gửi token đến renderer.
+- `desktop/src/main/google-workspace-manager.ts`: first-party Google Desktop OAuth (PKCE qua `McpExtensionOAuthManager`), hỗ trợ client secret tùy chọn được lưu riêng trong OS secure store khi cấu hình Google yêu cầu; access token được lấy nội bộ từ OS secure store; **không** materialize xuống clasp STDIO hoặc gửi token đến renderer.
 - `desktop/src/main/google-workspace-ipc.ts`, `desktop/src/shared/google-workspace-api.ts`, `desktop/src/preload.ts`: cầu Electron IPC kiểm tra trusted renderer và schema; không có đường IPC trả về token.
 - `desktop/src/renderer/components/GoogleWorkspacePanel.tsx`: giao diện tiếng Việt nhập Google OAuth Desktop Client ID, chọn quyền read/edit/deploy, duyệt consent, xem nguồn Apps Script và lưu AppSheet API key theo App ID / region.
 - `desktop/src/main/google-workspace-mcp-server.ts`: MCP server loopback với Bearer ngẫu nhiên trong bộ nhớ. SourceNerve đăng ký thành `sourcenerve-google-workspace` / namespace `google-workspace`. `apps_script_get_project`, `google_workspace_status`, `appsheet_key_status` là công cụ đọc; `apps_script_get_content` và `appsheet_find_rows` dùng Ask vì có thể trả dữ liệu nhạy cảm; `apps_script_update_content`, `apps_script_create_version`, `apps_script_create_deployment` dùng Ask, yêu cầu xác nhận bổ sung tại request. Việc cấp Google OAuth **không cấp quyền ghi tự động**.
