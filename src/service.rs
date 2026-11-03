@@ -19,8 +19,9 @@ pub(crate) mod sandbox;
 use crate::{
     coordination,
     error::{AppError, AppResult},
-    git, ops, workspace_env,
+    git, ops,
     workspace::{Workspace, WorkspaceRegistry, WorkspaceView},
+    workspace_env,
 };
 use sandbox::{SandboxEnforcement, SandboxMode};
 
@@ -333,11 +334,8 @@ impl AppState {
         }
         let cwd = resolve_command_cwd(&workspace, req.cwd.as_deref()).await?;
         let program = resolve_command_program(&workspace, &req.program).await?;
-        let project_env = workspace_env::read_project_env(
-            &workspace.root,
-            &cwd,
-            req.env_file.as_deref(),
-        )?;
+        let project_env =
+            workspace_env::read_project_env(&workspace.root, &cwd, req.env_file.as_deref())?;
         let timeout_ms = req.timeout_ms.clamp(100, MAX_COMMAND_TIMEOUT_MS);
         let sandbox_mode = req.sandbox;
         let prepared = sandbox::prepare_command_with_authorization(
