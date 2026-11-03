@@ -145,6 +145,10 @@ export class GoogleWorkspaceMcpServer {
     }
   }
 
+  url(): string {
+    return this.endpoint;
+  }
+
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
