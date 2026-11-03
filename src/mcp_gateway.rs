@@ -1074,17 +1074,22 @@ mod tests {
         let summary = extension_capability_summary(&[exposed]);
         assert_eq!(summary["apps_script"]["routable"], true);
         assert_eq!(summary["apps_script"]["requires_external_oauth"], true);
-        assert_eq!(summary["apps_script"]["tool_names"][0], "clasp__list_projects");
+        assert_eq!(
+            summary["apps_script"]["tool_names"][0],
+            "clasp__list_projects"
+        );
         assert_eq!(summary["browser_use"]["routable"], false);
 
         clasp.public_name = "clasp__arbitrary_tool".into();
         let unknown = public_tool(&clasp).expect("unknown tool still has schema");
         let summary = extension_capability_summary(&[unknown]);
         assert_eq!(summary["apps_script"]["routable"], false);
-        assert!(summary["apps_script"]["tool_names"]
-            .as_array()
-            .expect("tool names array")
-            .is_empty());
+        assert!(
+            summary["apps_script"]["tool_names"]
+                .as_array()
+                .expect("tool names array")
+                .is_empty()
+        );
     }
 
     #[test]
