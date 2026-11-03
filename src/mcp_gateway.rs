@@ -328,6 +328,7 @@ pub async fn bridge_catalog(pool: &SqlitePool, principal: &Principal) -> AppResu
 
 pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
     let mut browser_tools = Vec::new();
+    let mut apps_script_tools = Vec::new();
     let mut browser_debug_tools = Vec::new();
     let mut browser_vision_tools = Vec::new();
     let mut computer_tools = Vec::new();
@@ -349,6 +350,18 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
         let chrome_devtools = normalized.contains("chrome-devtools");
         let playwright = normalized.contains("playwright");
         let browser_use = normalized.contains("browser-use") || normalized.contains("browser_use");
+        // Only advertise known clasp MCP operations; capability discovery never
+        // changes extension enablement, per-tool policy or OAuth requirements.
+        let clasp_operation = normalized.strip_prefix("clasp__");
+        if clasp_operation.is_some_and(|operation| {
+            matches!(
+                operation,
+                "list_projects" | "clone_project" | "create_project" | "pull_files" | "push_files"
+            )
+        }) && apps_script_tools.len() < MAX_CAPABILITY_TOOL_NAMES
+        {
+            apps_script_tools.push(public_name.to_owned());
+        }
         let desktop_control =
             normalized.contains("desktop-control") || normalized.contains("desktop_control");
         let computer_use = normalized.contains("computer-use")
@@ -428,6 +441,13 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
     }
 
     serde_json::json!({
+        "apps_script": {
+            "routable": !apps_script_tools.is_empty(),
+            "backends": if apps_script_tools.is_empty() { Vec::<&str>::new() } else { vec!["clasp-mcp"] },
+            "tool_names": apps_script_tools,
+            "requires_external_oauth": true,
+            "scope": "authorized-clasp-mcp-tools-only",
+        },
         "browser_use": {
             "routable": !browser_tools.is_empty(),
             "backends": browser_backends.into_iter().collect::<Vec<_>>(),
@@ -1042,6 +1062,29 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn apps_script_capability_only_lists_known_authorized_clasp_tools() {
+        let mut clasp = tool(Some(false));
+        clasp.extension_id = "google-clasp-mcp".into();
+        clasp.public_name = "clasp__list_projects".into();
+        clasp.original_name = "list_projects".into();
+        let exposed = public_tool(&clasp).expect("clasp tool");
+        let summary = extension_capability_summary(&[exposed]);
+        assert_eq!(summary["apps_script"]["routable"], true);
+        assert_eq!(summary["apps_script"]["requires_external_oauth"], true);
+        assert_eq!(summary["apps_script"]["tool_names"][0], "clasp__list_projects");
+        assert_eq!(summary["browser_use"]["routable"], false);
+
+        clasp.public_name = "clasp__arbitrary_tool".into();
+        let unknown = public_tool(&clasp).expect("unknown tool still has schema");
+        let summary = extension_capability_summary(&[unknown]);
+        assert_eq!(summary["apps_script"]["routable"], false);
+        assert!(summary["apps_script"]["tool_names"]
+            .as_array()
+            .expect("tool names array")
+            .is_empty());
     }
 
     #[test]
