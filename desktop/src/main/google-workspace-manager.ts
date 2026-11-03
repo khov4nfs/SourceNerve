@@ -162,6 +162,10 @@ export class GoogleWorkspaceManager {
     }
     const body = JSON.stringify({ files: input.files });
     if (Buffer.byteLength(body) > MAX_RESPONSE_BYTES) throw new Error("Apps Script content too large");
+    const mode = (await this.googleStatus()).mode;
+    if (!mode || !modeAllows(mode, "edit")) {
+      throw new Error("Google Apps Script scope insufficient; reconnect with explicit permission");
+    }
     const current = await this.getAppsScriptContent(input.scriptId);
     if (current.fingerprint !== input.expectedFingerprint) {
       throw new Error("Apps Script remote content changed; review the latest files before pushing");
