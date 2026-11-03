@@ -171,6 +171,7 @@ export class McpExtensionOAuthManager {
         redirect_uri: loopback.redirectUri,
         code_verifier: verifier,
         ...(config.resource ? { resource: config.resource } : {}),
+        ...(await this.googleWorkspaceSecretField(extensionId)),
       });
       await this.persistTokens(extensionId, token);
       await this.client.materializeCredential(extensionId, token.accessToken);
@@ -276,6 +277,7 @@ export class McpExtensionOAuthManager {
       client_id: clientId,
       refresh_token: refreshToken,
       ...(config.resource ? { resource: config.resource } : {}),
+      ...(await this.googleWorkspaceSecretField(extensionId)),
     });
     if (!token.refreshToken) token.refreshToken = refreshToken;
     await this.persistTokens(extensionId, token);
@@ -286,6 +288,12 @@ export class McpExtensionOAuthManager {
       ...(token.expiresAt ? { expiresAt: token.expiresAt } : {}),
       message: "OAuth access token refreshed and materialized to the local SourceNerve gateway.",
     };
+  }
+
+  private async googleWorkspaceSecretField(extensionId: string): Promise<Record<string, string>> {
+    if (extensionId !== "google-workspace") return {};
+    const value = await this.secretStore.getOpaque("google-workspace:oauth-client-secret");
+    return value ? { client_secret: value } : {};
   }
 
   private async persistTokens(extensionId: string, token: TokenResponse): Promise<void> {
@@ -394,7 +402,8 @@ export function applyGoogleOfflineOAuthParameters(authorization: URL): void {
     authorization.pathname === "/o/oauth2/v2/auth"
   ) {
     authorization.searchParams.set("access_type", "offline");
-    authorization.searchParams.set("include_granted_scopes", "true");
+    // Installed applications must re-consent to changed scope sets. Google
+    // does not support incremental authorization for native Desktop clients.
   }
 }
 
