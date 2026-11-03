@@ -5,12 +5,28 @@ export interface GoogleWorkspaceStatus {
   configured: boolean;
   connected: boolean;
   mode: GoogleScriptAccessMode | null;
+  projectDiscoveryEnabled: boolean;
   expiresAt?: number;
 }
 export interface AppSheetAppStatus {
   appId: string;
   region: string;
   configured: boolean;
+}
+export interface AppsScriptProjectListInput {
+  pageSize?: number;
+  pageToken?: string;
+}
+export interface AppsScriptProjectSummary {
+  scriptId: string;
+  name: string;
+  modifiedTime: string | null;
+  editorUrl: string;
+}
+export interface AppsScriptProjectList {
+  projects: AppsScriptProjectSummary[];
+  nextPageToken: string | null;
+  incompleteSearch: boolean;
 }
 export interface AppsScriptFile {
   name: string;
@@ -38,6 +54,8 @@ export interface GoogleWorkspaceApi {
   configure(clientId: string, mode: GoogleScriptAccessMode, clientSecret?: string): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   connect(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   disconnect(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
+  enableProjectDiscovery(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
+  listProjects(input?: AppsScriptProjectListInput): Promise<DesktopResult<AppsScriptProjectList>>;
   scriptProject(scriptId: string): Promise<DesktopResult<Record<string, unknown>>>;
   scriptContent(scriptId: string): Promise<DesktopResult<AppsScriptContent>>;
   updateScript(input: AppsScriptUpdateInput): Promise<DesktopResult<AppsScriptContent>>;
@@ -53,6 +71,8 @@ export const GOOGLE_WORKSPACE_IPC = {
   configure: "desktop:google-workspace-configure",
   connect: "desktop:google-workspace-connect",
   disconnect: "desktop:google-workspace-disconnect",
+  enableProjectDiscovery: "desktop:google-workspace-enable-discovery",
+  listProjects: "desktop:google-workspace-list-projects",
   scriptProject: "desktop:google-workspace-script-project",
   scriptContent: "desktop:google-workspace-script-content",
   updateScript: "desktop:google-workspace-script-update",
