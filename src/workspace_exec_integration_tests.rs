@@ -52,6 +52,49 @@ async fn fixture() -> (TempDir, AppState) {
     (root, state)
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn workspace_exec_loads_project_env_only_for_explicitly_selected_command() {
+    let (root, state) = fixture().await;
+    let app = root.path().join("workspace").join("app");
+    std::fs::create_dir_all(&app).expect("project subdirectory");
+    std::fs::write(
+        app.join(".env"),
+        "PROJECT_GREETING=hello-world\nPROJECT_PRIVATE_VALUE=top-secret-test-value\n",
+    )
+    .expect("fixture .env");
+    let request = |name: &str, env_file| WorkspaceExecRequest {
+        workspace: "exec".into(),
+        program: "sh".into(),
+        args: vec![
+            "-c".into(),
+            "if [ \"$PROJECT_GREETING\" = \"hello-world\" ]; then printf 'present'; else printf 'absent'; fi"
+                .into(),
+        ],
+        cwd: Some("app".into()),
+        timeout_ms: 10_000,
+        request_id: Some(name.into()),
+        sandbox: Default::default(),
+        env_file,
+    };
+
+    let opted_out = state
+        .workspace_exec(request("exec:env-none", None))
+        .await
+        .expect("sanitized command without project env");
+    assert!(opted_out.success);
+    assert_eq!(opted_out.stdout, "absent");
+
+    let loaded = state
+        .workspace_exec(request("exec:env-opt-in", Some(".env".into())))
+        .await
+        .expect("project .env loaded");
+    assert!(loaded.success, "{}", loaded.stderr);
+    assert_eq!(loaded.stdout, "present");
+    assert!(!loaded.stdout.contains("top-secret-test-value"));
+    assert!(!loaded.stderr.contains("top-secret-test-value"));
+}
+
 #[tokio::test]
 async fn workspace_exec_rejects_unbounded_arguments_before_process_launch() {
     let (_root, state) = fixture().await;
