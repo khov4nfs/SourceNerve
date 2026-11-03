@@ -20,16 +20,14 @@ fn valid_env_filename(name: &str) -> bool {
         return false;
     }
     name == ".env"
-        || name
-            .strip_prefix(".env.")
-            .is_some_and(|suffix| {
-                !suffix.is_empty()
-                    && !suffix.starts_with('.')
-                    && !suffix.ends_with('.')
-                    && suffix
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-            })
+        || name.strip_prefix(".env.").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && !suffix.starts_with('.')
+                && !suffix.ends_with('.')
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        })
 }
 
 /// Protect the sanitized process environment and SourceNerve's own authority.
@@ -67,9 +65,16 @@ fn protected_key(key: &str) -> bool {
             | "PYTHONPATH"
             | "PYTHONHOME"
             | "RUSTC_WRAPPER"
-    ) || ["SOURCENERVE_", "LD_", "DYLD_", "GIT_", "BASH_FUNC_", "NPM_CONFIG_USERCONFIG"]
-        .iter()
-        .any(|prefix| upper.starts_with(prefix))
+    ) || [
+        "SOURCENERVE_",
+        "LD_",
+        "DYLD_",
+        "GIT_",
+        "BASH_FUNC_",
+        "NPM_CONFIG_USERCONFIG",
+    ]
+    .iter()
+    .any(|prefix| upper.starts_with(prefix))
 }
 
 fn project_env_path(root: &Path, cwd: &Path, name: &str) -> AppResult<PathBuf> {
@@ -79,17 +84,23 @@ fn project_env_path(root: &Path, cwd: &Path, name: &str) -> AppResult<PathBuf> {
         ));
     }
     let root = root.canonicalize().map_err(|error| {
-        AppError::Sandbox(format!("failed to validate workspace root for env_file: {error}"))
+        AppError::Sandbox(format!(
+            "failed to validate workspace root for env_file: {error}"
+        ))
     })?;
     let cwd = cwd.canonicalize().map_err(|error| {
-        AppError::Sandbox(format!("failed to validate workspace cwd for env_file: {error}"))
+        AppError::Sandbox(format!(
+            "failed to validate workspace cwd for env_file: {error}"
+        ))
     })?;
     if !cwd.starts_with(&root) {
         return Err(AppError::PathOutsideWorkspace);
     }
     let candidate = cwd.join(name);
     let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
-        AppError::Sandbox(format!("cannot read the explicitly selected project env_file: {error}"))
+        AppError::Sandbox(format!(
+            "cannot read the explicitly selected project env_file: {error}"
+        ))
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(AppError::InvalidRequest(
@@ -130,8 +141,9 @@ pub(crate) fn read_project_env(
             "project env_file exceeds the 64 KiB limit".into(),
         ));
     }
-    let values = crate::env_file::parse_env_file(&raw)
-        .map_err(|error| AppError::InvalidRequest(format!("malformed project env_file: {error}")))?;
+    let values = crate::env_file::parse_env_file(&raw).map_err(|error| {
+        AppError::InvalidRequest(format!("malformed project env_file: {error}"))
+    })?;
     if values.len() > MAX_ENV_ENTRIES {
         return Err(AppError::InvalidRequest(
             "project env_file exceeds the 128-variable limit".into(),
@@ -159,13 +171,18 @@ mod tests {
     #[test]
     fn reads_opt_in_project_env_and_preserves_quoted_values() {
         let root = tempfile::tempdir().expect("fixture");
-        std::fs::write(root.path().join(".env"), "NODE_ENV=development\nAPI_BASE_URL='https://example.test/path?x=1'\n")
-            .expect("write test env");
-        assert!(read_project_env(root.path(), root.path(), None)
-            .expect("opt out")
-            .is_empty());
-        let values = read_project_env(root.path(), root.path(), Some(".env"))
-            .expect("load project env");
+        std::fs::write(
+            root.path().join(".env"),
+            "NODE_ENV=development\nAPI_BASE_URL='https://example.test/path?x=1'\n",
+        )
+        .expect("write test env");
+        assert!(
+            read_project_env(root.path(), root.path(), None)
+                .expect("opt out")
+                .is_empty()
+        );
+        let values =
+            read_project_env(root.path(), root.path(), Some(".env")).expect("load project env");
         assert_eq!(values["NODE_ENV"], "development");
         assert_eq!(values["API_BASE_URL"], "https://example.test/path?x=1");
     }
@@ -173,8 +190,11 @@ mod tests {
     #[test]
     fn rejects_protected_variables_without_revealing_values() {
         let root = tempfile::tempdir().expect("fixture");
-        std::fs::write(root.path().join(".env"), "SOURCENERVE_BEARER_TOKEN=private-token\n")
-            .expect("write test env");
+        std::fs::write(
+            root.path().join(".env"),
+            "SOURCENERVE_BEARER_TOKEN=private-token\n",
+        )
+        .expect("write test env");
         let error = read_project_env(root.path(), root.path(), Some(".env"))
             .expect_err("must reject credential overwrite");
         assert!(!error.to_string().contains("private-token"));
@@ -184,15 +204,16 @@ mod tests {
     #[test]
     fn rejects_non_env_paths_and_accepts_named_project_env() {
         let root = tempfile::tempdir().expect("fixture");
-        std::fs::write(root.path().join(".env.local"), "LOCAL_ONLY=yes\n")
-            .expect("write test env");
+        std::fs::write(root.path().join(".env.local"), "LOCAL_ONLY=yes\n").expect("write test env");
         assert_eq!(
-            read_project_env(root.path(), root.path(), Some(".env.local"))
-                .expect("named env")["LOCAL_ONLY"],
+            read_project_env(root.path(), root.path(), Some(".env.local")).expect("named env")["LOCAL_ONLY"],
             "yes"
         );
         for name in ["../.env", "other", ".env.", ".env..private", "/tmp/.env"] {
-            assert!(read_project_env(root.path(), root.path(), Some(name)).is_err(), "{name}");
+            assert!(
+                read_project_env(root.path(), root.path(), Some(name)).is_err(),
+                "{name}"
+            );
         }
     }
 
@@ -202,7 +223,8 @@ mod tests {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().expect("fixture");
         let outside = tempfile::tempdir().expect("outside");
-        std::fs::write(outside.path().join("secrets"), "VALUE=do-not-copy\n").expect("outside file");
+        std::fs::write(outside.path().join("secrets"), "VALUE=do-not-copy\n")
+            .expect("outside file");
         symlink(outside.path().join("secrets"), root.path().join(".env")).expect("link");
         assert!(read_project_env(root.path(), root.path(), Some(".env")).is_err());
     }
@@ -210,10 +232,15 @@ mod tests {
     #[test]
     fn rejects_large_files_and_too_many_variables() {
         let root = tempfile::tempdir().expect("fixture");
-        std::fs::write(root.path().join(".env"), format!("KEY={}\n", "a".repeat(65_536)))
-            .expect("large env");
+        std::fs::write(
+            root.path().join(".env"),
+            format!("KEY={}\n", "a".repeat(65_536)),
+        )
+        .expect("large env");
         assert!(read_project_env(root.path(), root.path(), Some(".env")).is_err());
-        let entries = (0..129).map(|index| format!("KEY_{index}=a\n")).collect::<String>();
+        let entries = (0..129)
+            .map(|index| format!("KEY_{index}=a\n"))
+            .collect::<String>();
         std::fs::write(root.path().join(".env"), entries).expect("large variable count");
         assert!(read_project_env(root.path(), root.path(), Some(".env")).is_err());
     }
