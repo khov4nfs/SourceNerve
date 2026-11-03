@@ -971,7 +971,10 @@ mod tests {
             interactive.policy_for(CapabilityClass::ProviderReview),
             Policy::Allow
         );
-        assert_eq!(interactive.policy_for(CapabilityClass::Provider), Policy::Ask);
+        assert_eq!(
+            interactive.policy_for(CapabilityClass::Provider),
+            Policy::Ask
+        );
         assert_eq!(
             profile_spec("guarded-durable")
                 .unwrap()
