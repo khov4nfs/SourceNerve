@@ -48,6 +48,25 @@ Theo upstream clasp v3.4.1, MCP có các công cụ `list_projects`, `clone_proj
 
 Phiên bản `@google/clasp@3.4.1` được pin để tránh thay đổi ngầm. Trước khi nâng version, review release notes, security advisories và smoke test MCP tool schema.
 
+## 1b. Run project dùng .env trong sandbox
+
+Khi người dùng yêu cầu chạy project, `workspace_exec` và `workspace_process_start` có trường `env_file` **tùy chọn**. Ví dụ MCP arguments cho `workspace_process_start`:
+
+```json
+{
+  "workspace": "authorized-project-workspace",
+  "program": "npm",
+  "args": ["run", "dev"],
+  "cwd": "web-app",
+  "env_file": ".env"
+}
+```
+
+- Chỉ cho phép tên file `.env` hoặc `.env.<name>` ở cwd đã chọn; giới hạn 64 KiB / 128 biến / 8 KiB mỗi giá trị. Không đọc file symlink; không nhận đường dẫn tuyệt đối hoặc `..`.
+- Nạp sau khi thiết lập sanitized command environment để chỉ child nhận biến trong project. Các key có thể phá ranh giới sandbox, ví dụ `PATH`, `HOME`, `SOURCENERVE_*`, `LD_*`, `GIT_*`, `NODE_OPTIONS`, bị chặn.
+- `env_file` mặc định là null để test/build thông thường không tự nhận bí mật. File thực tế cần tồn tại trong workspace/cwd, không phải `.env` của daemon SourceNerve. Không log giá trị, không tự push hay đọc key vào chat; ứng dụng được chạy **có thể tự in bí mật** nếu code của chính nó làm vậy nên phải review commands/logs.
+- Đường chạy qua native Harness command API cũng hỗ trợ `env_file`; các phiên chưa cập nhật SourceNerve sẽ chưa hỗ trợ tham số này.
+
 ## 2. Apps Script: read → edit → test → push → deploy
 
 - **Discover:** dùng `mcp_extension_catalog` → `capabilities.apps_script` (chỉ liệt kê các tool clasp đã được đăng ký và bật; `requires_external_oauth=true`). Xác nhận namespaced tool `clasp__list_projects` đã có, schema thực tế và trạng thái per-tool policy.
