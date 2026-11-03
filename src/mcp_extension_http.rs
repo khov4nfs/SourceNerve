@@ -711,6 +711,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn desktop_http_session_stays_connected_across_calls_without_a_workspace() {
+        let fixture = tempfile::tempdir().expect("fixture tempdir");
+        let pool = db::connect(&fixture.path().join("state"))
+            .await
+            .expect("connect fixture database");
+        let state = AppState {
+            workspaces: WorkspaceRegistry::build(&[]).expect("no repository workspace"),
+            db: pool.clone(),
+            mutation_lock: Arc::new(Mutex::new(())),
+            github_token: None,
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (downstream_url, downstream_task) = spawn_fake_memory_mcp(calls.clone()).await;
+        let bearer = "mcp-gui-persistence-test";
+        let (base, server_task) = spawn_sourcenerve(state, bearer).await;
+        let extension_id = "computer-use-mcp-session-test";
+        admin_post(
+            &base,
+            "/api/v1/mcp/extensions/register",
+            bearer,
+            serde_json::json!({
+                "id": extension_id,
+                "name": "Fake Computer Use",
+                "version": "1.0.0",
+                "namespace": "computer-use",
+                "source": "test:gui-http",
+                "transport": {"transport": "streamable-http", "url": downstream_url},
+                "auth_type": "none",
+                "required": false,
+                "update_channel": "stable"
+            }),
+        )
+        .await;
+        admin_post(
+            &base,
+            "/api/v1/mcp/extensions/enable",
+            bearer,
+            serde_json::json!({"extension_id": extension_id}),
+        )
+        .await;
+
+        let health = admin_get_json(&base, "/api/v1/mcp/extensions/health", bearer).await;
+        let gui = health
+            .as_array()
+            .expect("extension health list")
+            .iter()
+            .find(|item| item["extension"]["id"] == extension_id)
+            .expect("GUI extension health");
+        assert_eq!(gui["session_state"], "connected");
+
+        sqlx::query(
+            "UPDATE mcp_extension_tools SET read_only=1, destructive=0, idempotent=1, open_world=0 WHERE extension_id=?1 AND original_name='search'",
+        )
+        .bind(extension_id)
+        .execute(&pool)
+        .await
+        .expect("complete read metadata");
+        admin_post(
+            &base,
+            "/api/v1/mcp/extensions/tools/policy",
+            bearer,
+            serde_json::json!({
+                "extension_id": extension_id,
+                "tool_name": "search",
+                "enabled": true,
+                "approval": "automatic"
+            }),
+        )
+        .await;
+
+        for expected_calls in 1..=2 {
+            let result = admin_post_json(
+                &base,
+                "/api/v1/mcp/extensions/bridge/call/read",
+                bearer,
+                serde_json::json!({
+                    "public_tool": "computer-use__search",
+                    "arguments": {}
+                }),
+            )
+            .await;
+            assert!(!result.to_string().contains("dispatcher rejects"), "{result}");
+            assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
+            let health = admin_get_json(&base, "/api/v1/mcp/extensions/health", bearer).await;
+            assert_eq!(health[0]["session_state"], "connected");
+        }
+
+        admin_post(
+            &base,
+            "/api/v1/mcp/extensions/disable",
+            bearer,
+            serde_json::json!({"extension_id": extension_id}),
+        )
+        .await;
+        let disabled = admin_get_json(&base, "/api/v1/mcp/extensions/health", bearer).await;
+        assert_eq!(disabled[0]["session_state"], "idle");
+        assert_eq!(disabled[0]["runtime"]["state"], "stopped");
+
+        server_task.abort();
+        downstream_task.abort();
+    }
+
+    #[tokio::test]
     async fn extension_lifecycle_notifies_connected_client_and_routes_discovered_tool() {
         let fixture = tempfile::tempdir().expect("fixture tempdir");
         let registry = WorkspaceRegistry::build(&[]).expect("empty workspace registry");
