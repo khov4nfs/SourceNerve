@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{AppError, AppResult},
+    mcp_extension_policy::{ToolClassification, complete_known_browser_classification},
     plugin_hub_runtime, runtime,
     service::AppState,
 };
@@ -722,10 +723,19 @@ async fn register_extensions(state: &AppState, registry: &mut Registry) -> AppRe
     .await?;
 
     for row in rows {
-        let read_only = flag(row.6);
-        let destructive = flag(row.7);
-        let idempotent = flag(row.8);
-        let open_world = flag(row.9);
+        let metadata = complete_known_browser_classification(
+            &row.4,
+            ToolClassification {
+                read_only: flag(row.6),
+                destructive: flag(row.7),
+                idempotent: flag(row.8),
+                open_world: flag(row.9),
+            },
+        );
+        let read_only = metadata.read_only;
+        let destructive = metadata.destructive;
+        let idempotent = metadata.idempotent;
+        let open_world = metadata.open_world;
         let classified = read_only.is_some()
             && destructive.is_some()
             && idempotent.is_some()
