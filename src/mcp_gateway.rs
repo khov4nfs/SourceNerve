@@ -365,7 +365,8 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
         let workspace_script_known = workspace_operation.is_some_and(|operation| {
             matches!(
                 operation,
-                "apps_script_get_project"
+                "apps_script_list_projects"
+                    | "apps_script_get_project"
                     | "apps_script_get_content"
                     | "apps_script_update_content"
                     | "apps_script_create_version"
