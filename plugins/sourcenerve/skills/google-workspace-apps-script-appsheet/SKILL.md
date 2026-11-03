@@ -13,6 +13,7 @@ description: Use ChatGPT Chat through SourceNerve MCP to inspect, edit, test, an
 - **AppSheet Editor configuration:** Chỉ dùng Chrome DevTools Browser Use với phiên đã đăng nhập để sửa Views, Actions, Bots và Expressions. Desktop Control chỉ là phương án dự phòng khi browser DOM/a11y không đủ và người dùng cho phép tương tác foreground cụ thể.
 - **AppSheet REST API:** Dùng để thao tác bảng dữ liệu hoặc gọi action đã định nghĩa, **không** nhầm API dữ liệu với API sửa cấu hình Views/Bots trong Editor.
 - Browser/Computer Use không bắt buộc chọn Git workspace. Thao tác đọc/sửa repository và shell vẫn phải dùng workspace được SourceNerve cho phép.
+- Khi user yêu cầu `run project` và dự án có file `.env`, gọi `workspace_process_start` (server chạy lâu) hoặc `workspace_exec` (lệnh ngắn) với `cwd` của project và `env_file: ".env"`. Không tự đọc/dán bí mật vào ChatGPT, không dùng shell `source .env`; chỉ tiến trình con nhận các biến được phép. Khi không yêu cầu file, `env_file=null` và không truyền biến dự án.
 
 ## 2. Apps Script — kiểm tra kết nối và quyền
 
