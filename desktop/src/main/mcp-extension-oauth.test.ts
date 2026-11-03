@@ -14,7 +14,7 @@ describe("Google Workspace OAuth offline scope handling", () => {
     google.searchParams.set("code_challenge_method", "S256");
     applyGoogleOfflineOAuthParameters(google);
     expect(google.searchParams.get("access_type")).toBe("offline");
-    expect(google.searchParams.get("include_granted_scopes")).toBe("true");
+    expect(google.searchParams.has("include_granted_scopes")).toBe(false);
     expect(google.searchParams.get("code_challenge_method")).toBe("S256");
   });
 
