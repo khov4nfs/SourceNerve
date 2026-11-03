@@ -36,7 +36,9 @@ async function readConnected(f: ReturnType<typeof fixture>) {
 describe("Google Workspace Desktop secure adapters", () => {
   it("never moves tokens to an MCP extension and defaults to no authorization", async () => {
     const f = fixture();
-    expect(await f.manager.googleStatus()).toEqual({ configured: false, connected: false, mode: null });
+    expect(await f.manager.googleStatus()).toEqual({
+      configured: false, connected: false, mode: null, projectDiscoveryEnabled: false,
+    });
     await expect(f.manager.getAppsScriptProject(SCRIPT_ID)).rejects.toThrow(/scope insufficient/);
     const status = await f.manager.configureGoogle(CLIENT_ID, "read");
     expect(status.configured).toBe(true);
@@ -88,6 +90,112 @@ describe("Google Workspace Desktop secure adapters", () => {
       .rejects.toThrow(/remote content changed/);
     expect(f.fetcher).toHaveBeenCalledTimes(1); // GET only: fail closed, no PUT
     expect(f.fetcher.mock.calls[0][1]?.method).toBe("GET");
+    await f.manager.shutdown();
+  });
+
+  it("enables metadata discovery without changing deploy scope and clears the old OAuth tokens", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "deploy", "desktop-secret-for-test");
+    f.secrets.set("mcp-extension:google-workspace:credential", "previous-access-token");
+    f.secrets.set("mcp-extension:google-workspace:oauth-refresh", "previous-refresh-token");
+    const enabled = await f.manager.enableProjectDiscovery();
+    expect(enabled).toEqual({
+      configured: true, connected: false, mode: "deploy", projectDiscoveryEnabled: true,
+    });
+    expect(f.secrets.has("mcp-extension:google-workspace:credential")).toBe(false);
+    expect(f.secrets.has("mcp-extension:google-workspace:oauth-refresh")).toBe(false);
+    expect(f.secrets.get("google-workspace:oauth-client-secret")).toBe("desktop-secret-for-test");
+    const saved = JSON.parse(f.secrets.get("mcp-extension:google-workspace:oauth-config") ?? "{}") as {
+      scopes?: string[];
+    };
+    expect(saved.scopes).toContain("https://www.googleapis.com/auth/drive.metadata.readonly");
+    expect(saved.scopes).toContain("https://www.googleapis.com/auth/script.projects");
+    expect(saved.scopes).toContain("https://www.googleapis.com/auth/script.deployments");
+    expect(saved.scopes).not.toContain("https://www.googleapis.com/auth/drive");
+    await f.manager.shutdown();
+  });
+
+  it("never sends a Drive request without explicit metadata consent", async () => {
+    const f = fixture();
+    await readConnected(f);
+    await expect(f.manager.listAppsScriptProjects()).rejects.toThrow(/metadata access is not enabled/);
+    expect(f.fetcher).not.toHaveBeenCalled();
+    await f.manager.enableProjectDiscovery();
+    await expect(f.manager.listAppsScriptProjects()).rejects.toThrow(/authorization is required/);
+    expect(f.fetcher).not.toHaveBeenCalled();
+    await f.manager.shutdown();
+  });
+
+  it("lists standalone scripts from Drive metadata only, with safe editor links and opaque pagination", async () => {
+    const f = fixture();
+    await readConnected(f);
+    await f.manager.enableProjectDiscovery();
+    f.secrets.set("mcp-extension:google-workspace:credential", "new-consented-token");
+    const modifiedTime = "2026-11-04T01:02:03.000Z";
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({
+      files: [
+        { id: SCRIPT_ID, name: "My script & helpers", mimeType: "application/vnd.google-apps.script",
+          modifiedTime },
+      ],
+      nextPageToken: "next/page+=token",
+      incompleteSearch: false,
+    }))).mockResolvedValueOnce(new Response(JSON.stringify({
+      files: [{ id: "b".repeat(36), name: "Another script",
+        mimeType: "application/vnd.google-apps.script" }],
+    })));
+    const first = await f.manager.listAppsScriptProjects({ pageSize: 20 });
+    expect(first.projects).toEqual([{
+      name: "My script & helpers", scriptId: SCRIPT_ID, modifiedTime,
+      editorUrl: `https://script.google.com/d/${SCRIPT_ID}/edit`,
+    }]);
+    expect(first.nextPageToken).toBe("next/page+=token");
+    expect(first.incompleteSearch).toBe(false);
+    const firstUrl = new URL(f.fetcher.mock.calls[0][0] as string);
+    expect(firstUrl.origin).toBe("https://www.googleapis.com");
+    expect(firstUrl.pathname).toBe("/drive/v3/files");
+    expect(firstUrl.searchParams.get("q")).toBe(
+      "mimeType = 'application/vnd.google-apps.script' and trashed = false",
+    );
+    expect(firstUrl.searchParams.get("fields")).toBe(
+      "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)",
+    );
+    expect(firstUrl.searchParams.get("pageSize")).toBe("20");
+    const [, firstRequest] = f.fetcher.mock.calls[0];
+    expect(firstRequest?.method).toBe("GET");
+    expect((firstRequest?.headers as Record<string, string>).authorization).toBe("Bearer new-consented-token");
+
+    const second = await f.manager.listAppsScriptProjects({
+      pageSize: 20, pageToken: first.nextPageToken!,
+    });
+    expect(second.projects).toHaveLength(1);
+    expect(second.projects[0].modifiedTime).toBeNull();
+    expect(second.nextPageToken).toBeNull();
+    const secondUrl = new URL(f.fetcher.mock.calls[1][0] as string);
+    expect(secondUrl.searchParams.get("pageToken")).toBe("next/page+=token");
+    expect(JSON.stringify(first)).not.toContain("new-consented-token");
+    await f.manager.shutdown();
+  });
+
+  it("rejects malformed Drive metadata, unexpected MIME types and invalid pagination", async () => {
+    const f = fixture();
+    await readConnected(f);
+    await f.manager.enableProjectDiscovery();
+    f.secrets.set("mcp-extension:google-workspace:credential", "read-token");
+    for (const request of [
+      { pageSize: 0 },
+      { pageSize: 101 },
+      { pageToken: "a\\nb" },
+      { pageToken: "" },
+    ]) {
+      await expect(f.manager.listAppsScriptProjects(request))
+        .rejects.toThrow(/pageSize|pagination token/);
+    }
+    expect(f.fetcher).not.toHaveBeenCalled();
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({
+      files: [{ id: SCRIPT_ID, name: "Not a script",
+        mimeType: "application/vnd.google-apps.spreadsheet" }],
+    })));
+    await expect(f.manager.listAppsScriptProjects()).rejects.toThrow(/invalid Apps Script metadata/);
     await f.manager.shutdown();
   });
 
