@@ -48,6 +48,28 @@ type PersistentStdioSlot = Arc<Mutex<Option<PersistentStdioSession>>>;
 static PERSISTENT_STDIO_SESSIONS: OnceLock<Mutex<HashMap<String, PersistentStdioSlot>>> =
     OnceLock::new();
 
+struct PersistentHttpSession {
+    config_hash: String,
+    client: PersistentStdioClient,
+}
+
+type PersistentHttpSlot = Arc<Mutex<Option<PersistentHttpSession>>>;
+
+static PERSISTENT_HTTP_SESSIONS: OnceLock<Mutex<HashMap<String, PersistentHttpSlot>>> =
+    OnceLock::new();
+
+fn persistent_http_sessions() -> &'static Mutex<HashMap<String, PersistentHttpSlot>> {
+    PERSISTENT_HTTP_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn persistent_http_slot(extension_id: &str) -> PersistentHttpSlot {
+    let mut sessions = persistent_http_sessions().lock().await;
+    sessions
+        .entry(extension_id.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(None)))
+        .clone()
+}
+
 fn persistent_stdio_sessions() -> &'static Mutex<HashMap<String, PersistentStdioSlot>> {
     PERSISTENT_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -394,12 +416,209 @@ pub(crate) async fn close_persistent_stdio_session(extension_id: &str) {
     }
 }
 
+/// HTTP GUI extensions (including the built-in Desktop Control service) use
+/// a single MCP client across calls. This preserves protocol session state
+/// without granting new permissions or retaining credentials on disk.
+async fn connect_http_client(
+    extension: &ExtensionRecord,
+    url: &str,
+    bearer: Option<&str>,
+    lease: &RuntimeLease,
+) -> AppResult<PersistentStdioClient> {
+    let mut last_error = None;
+    for attempt in 0..mcp_extension_runtime::MAX_CONNECT_ATTEMPTS {
+        mcp_extension_runtime::ensure_current(lease)?;
+        let transport = http_transport(url, bearer);
+        let client = match timeout(CONNECT_TIMEOUT, ().serve(transport)).await {
+            Ok(Ok(client)) => client,
+            Ok(Err(error)) => {
+                let error = client_error(extension, "Streamable HTTP initialize failed", error);
+                if retry_connect(extension, lease, attempt, &error).await? {
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(_) => {
+                let error =
+                    client_timeout(extension, "Streamable HTTP initialize", CONNECT_TIMEOUT);
+                if retry_connect(extension, lease, attempt, &error).await? {
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+        };
+        return Ok(client);
+    }
+    Err(last_error.unwrap_or_else(|| {
+        AppError::Command(format!(
+            "MCP extension `{}` HTTP connection exhausted its bounded retry budget",
+            extension.id
+        ))
+    }))
+}
+
+fn http_session_config_hash(url: &str, bearer: Option<&str>) -> String {
+    let mut digest = Sha256::new();
+    digest.update(url.as_bytes());
+    digest.update([0]);
+    if let Some(bearer) = bearer {
+        digest.update(bearer.as_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
+pub(crate) async fn close_persistent_sessions(extension_id: &str) {
+    close_persistent_stdio_session(extension_id).await;
+    let slot = persistent_http_sessions().lock().await.remove(extension_id);
+    if let Some(slot) = slot {
+        let mut session = slot.lock().await;
+        if let Some(current) = session.take() {
+            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+        }
+    }
+}
+
+/// Health status intentionally reveals no credentials, endpoints or host paths.
+/// A service restart reports idle until the next authorized MCP call reconnects.
+pub(crate) async fn persistent_session_state(extension: &ExtensionRecord) -> &'static str {
+    match &extension.transport {
+        ExtensionTransportConfig::Stdio { command, args }
+            if sandbox::requires_persistent_stdio_session(&extension.id, command, args) =>
+        {
+            let slot = persistent_stdio_sessions().lock().await.get(&extension.id).cloned();
+            let Some(slot) = slot else { return "idle" };
+            let Ok(session) = slot.try_lock() else { return "busy" };
+            match session.as_ref() {
+                Some(current) if !current.client.is_closed() => "connected",
+                Some(_) => "disconnected",
+                None => "idle",
+            }
+        }
+        ExtensionTransportConfig::StreamableHttp { .. }
+            if sandbox::requires_persistent_http_session(&extension.id) =>
+        {
+            let slot = persistent_http_sessions().lock().await.get(&extension.id).cloned();
+            let Some(slot) = slot else { return "idle" };
+            let Ok(session) = slot.try_lock() else { return "busy" };
+            match session.as_ref() {
+                Some(current) if !current.client.is_closed() => "connected",
+                Some(_) => "disconnected",
+                None => "idle",
+            }
+        }
+        _ => "not-applicable",
+    }
+}
+
+async fn discover_persistent_http(
+    extension: &ExtensionRecord,
+    url: &str,
+    bearer: Option<&str>,
+    lease: &RuntimeLease,
+) -> AppResult<Vec<DiscoveredTool>> {
+    let slot = persistent_http_slot(&extension.id).await;
+    let config_hash = http_session_config_hash(url, bearer);
+    let mut session = slot.lock().await;
+    let replace = session
+        .as_ref()
+        .is_none_or(|current| current.config_hash != config_hash || current.client.is_closed());
+    if replace {
+        if let Some(current) = session.take() {
+            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+        }
+        let client = connect_http_client(extension, url, bearer, lease).await?;
+        *session = Some(PersistentHttpSession {
+            config_hash,
+            client,
+        });
+    }
+
+    mcp_extension_runtime::ensure_current(lease)?;
+    let result = {
+        let client = &session.as_ref().expect("persistent HTTP session").client;
+        match timeout(LIST_TIMEOUT, client.list_all_tools()).await {
+            Ok(Ok(tools)) => Ok(tools),
+            Ok(Err(error)) => Err(client_error(extension, "tools/list failed", error)),
+            Err(_) => Err(client_timeout(extension, "tools/list", LIST_TIMEOUT)),
+        }
+    };
+    if result.is_err() && let Some(current) = session.take() {
+        let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+    }
+    drop(session);
+    mcp_extension_runtime::ensure_current(lease)?;
+    match result {
+        Ok(tools) => {
+            mcp_extension_runtime::mark_ready(&extension.id).await?;
+            Ok(tools.iter().map(discovered_tool).collect())
+        }
+        Err(error) => {
+            let category = mcp_extension_runtime::classify_error(&error);
+            mcp_extension_runtime::mark_failure(&extension.id, category).await?;
+            Err(error)
+        }
+    }
+}
+
+async fn call_persistent_http(
+    extension: &ExtensionRecord,
+    url: &str,
+    tool_name: &str,
+    arguments: Option<Map<String, serde_json::Value>>,
+    bearer: Option<&str>,
+    lease: &RuntimeLease,
+) -> AppResult<CallToolResult> {
+    let slot = persistent_http_slot(&extension.id).await;
+    let config_hash = http_session_config_hash(url, bearer);
+    let mut session = slot.lock().await;
+    let replace = session
+        .as_ref()
+        .is_none_or(|current| current.config_hash != config_hash || current.client.is_closed());
+    if replace {
+        if let Some(current) = session.take() {
+            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+        }
+        let client = connect_http_client(extension, url, bearer, lease).await?;
+        *session = Some(PersistentHttpSession {
+            config_hash,
+            client,
+        });
+    }
+
+    mcp_extension_runtime::ensure_current(lease)?;
+    let request = downstream_call_request(tool_name, arguments);
+    let result = {
+        let client = &session.as_ref().expect("persistent HTTP session").client;
+        match timeout(CALL_TIMEOUT, client.call_tool(request)).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => Err(client_error(extension, "tools/call failed", error)),
+            Err(_) => Err(client_timeout(extension, "tools/call", CALL_TIMEOUT)),
+        }
+    };
+    let poisoned = match &result {
+        Ok(result) => persistent_browser_result_poisoned(result),
+        Err(_) => true,
+    };
+    if poisoned && let Some(current) = session.take() {
+        let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+    }
+    drop(session);
+    mcp_extension_runtime::ensure_current(lease)?;
+    // Never retry a dispatched tools/call, including clicks and typing.
+    finish_dispatched_call(extension, result).await
+}
+
 async fn discover_http(
     extension: &ExtensionRecord,
     url: &str,
     bearer: Option<&str>,
     lease: &RuntimeLease,
 ) -> AppResult<Vec<DiscoveredTool>> {
+    if sandbox::requires_persistent_http_session(&extension.id) {
+        return discover_persistent_http(extension, url, bearer, lease).await;
+    }
     let mut last_error = None;
     for attempt in 0..mcp_extension_runtime::MAX_CONNECT_ATTEMPTS {
         mcp_extension_runtime::ensure_current(lease)?;
@@ -463,6 +682,9 @@ async fn call_http(
     bearer: Option<&str>,
     lease: &RuntimeLease,
 ) -> AppResult<CallToolResult> {
+    if sandbox::requires_persistent_http_session(&extension.id) {
+        return call_persistent_http(extension, url, tool_name, arguments, bearer, lease).await;
+    }
     let mut last_error = None;
     for attempt in 0..mcp_extension_runtime::MAX_CONNECT_ATTEMPTS {
         mcp_extension_runtime::ensure_current(lease)?;
@@ -729,6 +951,20 @@ mod tests {
         assert!(validate_environment(Some(&invalid)).is_err());
         let valid = BTreeMap::from([("GITHUB_TOKEN".to_string(), "secret".to_string())]);
         assert!(validate_environment(Some(&valid)).is_ok());
+    }
+
+    #[test]
+    fn persistent_http_hash_changes_when_endpoint_or_credentials_rotate() {
+        let base = http_session_config_hash("http://127.0.0.1:4001/mcp", Some("token-one"));
+        assert_ne!(
+            base,
+            http_session_config_hash("http://127.0.0.1:4002/mcp", Some("token-one"))
+        );
+        assert_ne!(
+            base,
+            http_session_config_hash("http://127.0.0.1:4001/mcp", Some("token-two"))
+        );
+        assert_ne!(base, http_session_config_hash("http://127.0.0.1:4001/mcp", None));
     }
 
     #[test]
