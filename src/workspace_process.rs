@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    ops,
+    ops, workspace_env,
     service::{
         AppState,
         sandbox::{self, SandboxEnforcement, SandboxMode},
@@ -54,6 +54,9 @@ pub struct WorkspaceProcessStartRequest {
     /// Requested process sandbox. The secure direct-call default is workspace-write.
     #[serde(default)]
     pub sandbox: SandboxMode,
+    /// Opt-in .env basename from this process's working directory, never daemon-wide.
+    #[serde(default)]
+    pub env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -403,6 +406,11 @@ impl AppState {
 
         let cwd = resolve_command_cwd(&workspace, request.cwd.as_deref()).await?;
         let program = resolve_command_program(&workspace, &request.program).await?;
+        let project_env = workspace_env::read_project_env(
+            &workspace.root,
+            &cwd,
+            request.env_file.as_deref(),
+        )?;
         let sandbox_mode = request.sandbox;
         let prepared = sandbox::prepare_command_with_authorization(
             &workspace.root,
@@ -424,6 +432,7 @@ impl AppState {
             .kill_on_drop(true);
         configure_process_tree(&mut command);
         sandbox::sanitize_command_environment(&mut command, sandbox_mode)?;
+        command.envs(project_env);
 
         let mut child = command.spawn().map_err(|error| {
             AppError::Sandbox(format!(
@@ -754,6 +763,7 @@ mod tests {
             cwd: None,
             request_id: Some(request_id.into()),
             sandbox,
+            env_file: None,
         }
     }
 
