@@ -482,7 +482,8 @@ pub async fn bridge_call(
         &route.tool.public_name,
         route.tool.policy.classification,
     )
-    .read_only == Some(true);
+    .read_only
+        == Some(true);
     let dispatcher_matches = match dispatcher {
         BridgeDispatcher::Read => is_read_only,
         BridgeDispatcher::Write => !is_read_only,
