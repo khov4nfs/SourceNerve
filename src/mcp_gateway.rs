@@ -1130,8 +1130,8 @@ mod tests {
     fn desktop_google_workspace_capabilities_never_imply_oauth_or_appsheet_keys() {
         let mut script = tool(Some(false));
         script.extension_id = "sourcenerve-google-workspace".into();
-        script.public_name = "google-workspace__apps_script_get_content".into();
-        script.original_name = "apps_script_get_content".into();
+        script.public_name = "google-workspace__apps_script_list_projects".into();
+        script.original_name = "apps_script_list_projects".into();
         let mut appsheet = tool(Some(false));
         appsheet.extension_id = "sourcenerve-google-workspace".into();
         appsheet.public_name = "google-workspace__appsheet_find_rows".into();
@@ -1143,6 +1143,10 @@ mod tests {
         assert_eq!(summary["apps_script"]["routable"], true);
         assert_eq!(summary["apps_script"]["requires_external_oauth"], true);
         assert_eq!(summary["apps_script"]["backends"][0], "desktop-oauth-proxy");
+        assert_eq!(
+            summary["apps_script"]["tool_names"][0],
+            "google-workspace__apps_script_list_projects"
+        );
         assert_eq!(summary["appsheet_api"]["routable"], true);
         assert_eq!(summary["appsheet_api"]["requires_per_app_key"], true);
         assert_eq!(
