@@ -555,7 +555,8 @@ fn prepare_tools(namespace: &str, tools: &[DiscoveredTool]) -> AppResult<Vec<Pre
                 "MCP namespace normalization produced a duplicate public tool `{public_name}`"
             )));
         }
-        let classification = complete_known_browser_classification(&public_name, tool.classification);
+        let classification =
+            complete_known_browser_classification(&public_name, tool.classification);
         prepared.push(PreparedTool {
             original_name: tool.name.clone(),
             public_name,
