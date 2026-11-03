@@ -254,7 +254,9 @@ async fn discover_persistent_stdio(
             Err(_) => Err(client_timeout(extension, "tools/list", LIST_TIMEOUT)),
         }
     };
-    if result.is_err() && let Some(current) = session.take() {
+    if result.is_err()
+        && let Some(current) = session.take()
+    {
         close_stdio_session(current).await;
     }
     drop(session);
@@ -543,9 +545,15 @@ pub(crate) async fn persistent_session_state(extension: &ExtensionRecord) -> &'s
         ExtensionTransportConfig::Stdio { command, args }
             if sandbox::requires_persistent_stdio_session(&extension.id, command, args) =>
         {
-            let slot = persistent_stdio_sessions().lock().await.get(&extension.id).cloned();
+            let slot = persistent_stdio_sessions()
+                .lock()
+                .await
+                .get(&extension.id)
+                .cloned();
             let Some(slot) = slot else { return "idle" };
-            let Ok(session) = slot.try_lock() else { return "busy" };
+            let Ok(session) = slot.try_lock() else {
+                return "busy";
+            };
             match session.as_ref() {
                 Some(current) if !current.client.is_closed() => "connected",
                 Some(_) => "disconnected",
@@ -555,9 +563,15 @@ pub(crate) async fn persistent_session_state(extension: &ExtensionRecord) -> &'s
         ExtensionTransportConfig::StreamableHttp { .. }
             if sandbox::requires_persistent_http_session(&extension.id) =>
         {
-            let slot = persistent_http_sessions().lock().await.get(&extension.id).cloned();
+            let slot = persistent_http_sessions()
+                .lock()
+                .await
+                .get(&extension.id)
+                .cloned();
             let Some(slot) = slot else { return "idle" };
-            let Ok(session) = slot.try_lock() else { return "busy" };
+            let Ok(session) = slot.try_lock() else {
+                return "busy";
+            };
             match session.as_ref() {
                 Some(current) if !current.client.is_closed() => "connected",
                 Some(_) => "disconnected",
@@ -604,7 +618,9 @@ async fn discover_persistent_http(
             Err(_) => Err(client_timeout(extension, "tools/list", LIST_TIMEOUT)),
         }
     };
-    if result.is_err() && let Some(current) = session.take() {
+    if result.is_err()
+        && let Some(current) = session.take()
+    {
         close_http_session(current).await;
     }
     drop(session);
@@ -1024,7 +1040,10 @@ mod tests {
             base,
             http_session_config_hash("http://127.0.0.1:4001/mcp", Some("token-two"))
         );
-        assert_ne!(base, http_session_config_hash("http://127.0.0.1:4001/mcp", None));
+        assert_ne!(
+            base,
+            http_session_config_hash("http://127.0.0.1:4001/mcp", None)
+        );
     }
 
     #[test]
