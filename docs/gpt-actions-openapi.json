@@ -22,6 +22,7 @@
         "operationId": "listWorkspaces",
         "summary": "List configured SourceNerve workspaces",
         "description": "Returns only configured workspace metadata; clients never supply absolute workspace roots.",
+        "x-openai-isConsequential": false,
         "responses": {
           "200": {
             "$ref": "#/components/responses/JsonResponse"
@@ -33,6 +34,7 @@
       "get": {
         "operationId": "getReadiness",
         "summary": "Check SourceNerve production readiness",
+        "x-openai-isConsequential": false,
         "responses": {
           "200": {
             "$ref": "#/components/responses/JsonResponse"
@@ -103,6 +105,7 @@
       "post": {
         "operationId": "getRepositorySnapshot",
         "summary": "Get the current Git HEAD and clean/dirty state",
+        "x-openai-isConsequential": false,
         "requestBody": {
           "$ref": "#/components/requestBodies/WorkspaceArg"
         },
@@ -117,6 +120,7 @@
       "post": {
         "operationId": "readFile",
         "summary": "Read a repository-relative UTF-8 source range and full-file SHA-256",
+        "x-openai-isConsequential": false,
         "requestBody": {
           "required": true,
           "content": {
@@ -139,6 +143,7 @@
         "operationId": "previewPatch",
         "summary": "Validate a patch without modifying repository files",
         "description": "Requires exact Git HEAD and one expected full-file SHA per touched path. SourceNerve runs the existing guarded patch preview contract.",
+        "x-openai-isConsequential": false,
         "requestBody": {
           "required": true,
           "content": {
@@ -161,6 +166,7 @@
         "operationId": "applyPatch",
         "summary": "Apply an already reviewable patch under SourceNerve concurrency guards",
         "description": "Mutates repository files only when exact HEAD, per-file SHA expectations and git apply validation still match.",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -182,6 +188,7 @@
       "post": {
         "operationId": "reviewGitChanges",
         "summary": "Return the complete review diff and its SHA-256",
+        "x-openai-isConsequential": false,
         "requestBody": {
           "$ref": "#/components/requestBodies/WorkspaceArg"
         },
@@ -197,6 +204,7 @@
         "operationId": "checkoutFeatureBranch",
         "summary": "Create and checkout a guarded feature branch",
         "description": "Requires a clean tree and exact expected HEAD. The configured default branch cannot be mutated directly.",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -219,6 +227,7 @@
         "operationId": "commitReviewedChanges",
         "summary": "Commit only the exact reviewed diff",
         "description": "Requires exact expected HEAD and expected diff SHA-256. Any edit after review fails closed.",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -240,6 +249,7 @@
       "post": {
         "operationId": "pushFeatureBranch",
         "summary": "Non-force push the current guarded feature branch",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -261,6 +271,7 @@
       "post": {
         "operationId": "syncDefaultBranch",
         "summary": "Fast-forward-only sync to the configured default branch and rebuild intelligence",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -282,6 +293,7 @@
       "post": {
         "operationId": "createGitHubIssue",
         "summary": "Create an idempotent GitHub issue for a configured GitHub workspace",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -303,6 +315,7 @@
       "post": {
         "operationId": "createGitHubPullRequest",
         "summary": "Create a pull request only when the pushed remote branch equals local HEAD",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {
@@ -324,6 +337,7 @@
       "post": {
         "operationId": "getGitHubPullRequest",
         "summary": "Read pull request state and current provider head SHA",
+        "x-openai-isConsequential": false,
         "requestBody": {
           "required": true,
           "content": {
@@ -346,6 +360,7 @@
         "operationId": "mergeGitHubPullRequest",
         "summary": "Request a guarded GitHub pull request merge",
         "description": "Requires exact current PR head SHA. SourceNerve never bypasses GitHub branch protection, required checks, reviews or authorization.",
+        "x-openai-isConsequential": true,
         "requestBody": {
           "required": true,
           "content": {

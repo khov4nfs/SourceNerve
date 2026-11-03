@@ -101,6 +101,7 @@ After applying, call Git review and use the returned exact diff SHA-256 for comm
 Never force push, reset, bypass provider checks, or merge without reading the current pull-request head SHA.
 Do not automatically merge a pull request unless the user explicitly requested merge.
 If SourceNerve reports stale HEAD, stale file hashes, dirty state, changed review diff, or provider-head mismatch, stop and refresh state instead of guessing.
+If a SourceNerve tool reports that user approval is required, do not treat it as an error: surface the pending action and approval ID clearly in the visible chat, prompt the user for allow/deny confirmation, and only proceed after the user explicitly approves.
 ```
 
 ## Exposed GPT Actions

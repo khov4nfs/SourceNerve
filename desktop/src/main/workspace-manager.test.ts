@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   WorkspaceManagerError,
+  ensureGitRepository,
   inspectRepository,
   providerFromRemoteUrl,
   suggestWorkspaceId,
@@ -111,5 +112,21 @@ describe("Desktop workspace repository inspection", () => {
     expect(firstId).not.toBe(secondId);
     expect(suggestWorkspaceIdForRoot(firstRoot)).toBe(firstId);
     expect(suggestWorkspaceIdForRoot(path.join(os.tmpdir(), "source-c", "x".repeat(200)))).toHaveLength(128);
+  });
+
+  it("automatically initializes a plain folder as a valid Git workspace", async () => {
+    const plainDir = await mkdtemp(path.join(os.tmpdir(), "sourcenerve-plain-"));
+    temporaryDirectories.push(plainDir);
+    await ensureGitRepository(plainDir);
+    const inspection = await inspectRepository(plainDir);
+    expect(inspection).toMatchObject({
+      root: plainDir,
+      defaultRemote: "origin",
+      defaultBranch: "main",
+      dirty: false,
+      localWritable: true,
+    });
+    expect(inspection.head).toMatch(/^[0-9a-f]{40}$/i);
+    expect(inspection.remotes).toEqual(["origin"]);
   });
 });
