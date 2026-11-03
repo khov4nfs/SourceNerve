@@ -10,6 +10,7 @@ use crate::{
     conversation_scope,
     error::{AppError, AppResult},
     harness, plugin_hub_runtime,
+    mcp_extension_policy::{ToolClassification, complete_known_browser_classification},
     principal::Principal,
     service::AppState,
 };
@@ -829,11 +830,20 @@ async fn dynamic_tool_safety(state: &AppState, name: &str) -> AppResult<Option<T
     let Some((read_only, destructive, idempotent, open_world)) = row else {
         return Ok(None);
     };
+    let metadata = complete_known_browser_classification(
+        name,
+        ToolClassification {
+            read_only: read_only.map(|value| value != 0),
+            destructive: destructive.map(|value| value != 0),
+            idempotent: idempotent.map(|value| value != 0),
+            open_world: open_world.map(|value| value != 0),
+        },
+    );
     let (Some(read_only), Some(destructive), Some(idempotent), Some(open_world)) = (
-        read_only.map(|value| value != 0),
-        destructive.map(|value| value != 0),
-        idempotent.map(|value| value != 0),
-        open_world.map(|value| value != 0),
+        metadata.read_only,
+        metadata.destructive,
+        metadata.idempotent,
+        metadata.open_world,
     ) else {
         return Ok(None);
     };
