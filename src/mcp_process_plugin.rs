@@ -740,7 +740,7 @@ fn process_tool(name: &str) -> Option<Tool> {
     let (title, description, schema, read_only, destructive, idempotent, open_world) = match name {
         WORKSPACE_PROCESS_START_TOOL => (
             "Workspace Process Start",
-            "Start one bounded long-running process session inside a configured read-write workspace. The process inherits only the sanitized runtime environment used by SourceNerve workspace execution, captures bounded stdout/stderr, is limited to eight concurrent sessions, and is automatically killed after six hours. Use workspace_process_logs to inspect it and workspace_process_stop when finished.",
+            "Start one bounded long-running process session inside a configured read-write workspace. The process inherits only the sanitized runtime environment used by SourceNerve workspace execution; optionally set env_file to .env or .env.<name> from cwd to load project variables only for this child, without exposing them in MCP responses. Captures bounded stdout/stderr, is limited to eight concurrent sessions, and is automatically killed after six hours. Use workspace_process_logs to inspect it and workspace_process_stop when finished.",
             serde_json::json!({
                 "type": "object",
                 "required": ["workspace", "program"],
@@ -749,6 +749,7 @@ fn process_tool(name: &str) -> Option<Tool> {
                     "program": { "type": "string", "minLength": 1, "maxLength": 512 },
                     "args": { "type": "array", "items": { "type": "string" }, "maxItems": 256, "default": [] },
                     "cwd": { "type": ["string", "null"], "default": null },
+                    "env_file": { "type": ["string", "null"], "maxLength": 64, "default": null, "description": "Opt-in .env or .env.<name> basename from cwd; values only reach the sandboxed child process" },
                     "request_id": { "type": ["string", "null"], "maxLength": 128, "default": null }
                 },
                 "additionalProperties": false
