@@ -184,7 +184,7 @@ describe("Google Workspace Desktop secure adapters", () => {
     for (const request of [
       { pageSize: 0 },
       { pageSize: 101 },
-      { pageToken: "a\\nb" },
+      { pageToken: "a\nb" },
       { pageToken: "" },
     ]) {
       await expect(f.manager.listAppsScriptProjects(request))
