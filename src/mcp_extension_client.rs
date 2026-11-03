@@ -475,7 +475,7 @@ pub(crate) async fn close_persistent_sessions(extension_id: &str) {
     if let Some(slot) = slot {
         let mut session = slot.lock().await;
         if let Some(current) = session.take() {
-            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+            close_http_session(current).await;
         }
     }
 }
@@ -512,6 +512,10 @@ pub(crate) async fn persistent_session_state(extension: &ExtensionRecord) -> &'s
     }
 }
 
+async fn close_http_session(mut session: PersistentHttpSession) {
+    let _ = session.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+}
+
 async fn discover_persistent_http(
     extension: &ExtensionRecord,
     url: &str,
@@ -526,7 +530,7 @@ async fn discover_persistent_http(
         .is_none_or(|current| current.config_hash != config_hash || current.client.is_closed());
     if replace {
         if let Some(current) = session.take() {
-            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+            close_http_session(current).await;
         }
         let client = connect_http_client(extension, url, bearer, lease).await?;
         *session = Some(PersistentHttpSession {
@@ -545,7 +549,7 @@ async fn discover_persistent_http(
         }
     };
     if result.is_err() && let Some(current) = session.take() {
-        let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+        close_http_session(current).await;
     }
     drop(session);
     mcp_extension_runtime::ensure_current(lease)?;
@@ -578,7 +582,7 @@ async fn call_persistent_http(
         .is_none_or(|current| current.config_hash != config_hash || current.client.is_closed());
     if replace {
         if let Some(current) = session.take() {
-            let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+            close_http_session(current).await;
         }
         let client = connect_http_client(extension, url, bearer, lease).await?;
         *session = Some(PersistentHttpSession {
@@ -602,7 +606,7 @@ async fn call_persistent_http(
         Err(_) => true,
     };
     if poisoned && let Some(current) = session.take() {
-        let _ = current.client.close_with_timeout(SHUTDOWN_TIMEOUT).await;
+        close_http_session(current).await;
     }
     drop(session);
     mcp_extension_runtime::ensure_current(lease)?;
