@@ -61,6 +61,10 @@ jobs:
         working-directory: .
         run: node --check deploy/pm2/ecosystem.config.cjs
 
+      - name: Verify Google Workspace MCP integration contract
+        working-directory: .
+        run: node scripts/verify-google-workspace-bridge.mjs
+
       - name: Install locked Desktop dependencies
         run: npm ci --no-audit --no-fund
 
