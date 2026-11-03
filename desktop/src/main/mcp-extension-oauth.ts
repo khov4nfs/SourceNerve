@@ -186,6 +186,26 @@ export class McpExtensionOAuthManager {
     }
   }
 
+  /**
+   * Desktop-Main-only access for a first-party API adapter. Never expose this
+   * method through IPC, MCP tool results, telemetry, or the renderer preload.
+   * Refreshes an expired token using OS-backed encrypted storage.
+   */
+  async accessTokenForTrustedRequest(extensionId: string): Promise<string> {
+    validateExtensionId(extensionId);
+    await this.requireConfig(extensionId);
+    const meta = await this.readMeta(extensionId);
+    if (meta?.expiresAt && meta.expiresAt <= Date.now() + EXPIRY_SKEW_MS) {
+      const refreshed = await this.tryRefresh(extensionId, true);
+      if (!refreshed.connected) throw new Error("OAuth reauthorization is required");
+    }
+    const token = await this.secretStore.getOpaque(accessKey(extensionId));
+    if (!token || !safeToken(token)) {
+      throw new Error("OAuth authorization is required before calling Google APIs");
+    }
+    return token;
+  }
+
   async refresh(extensionId: string): Promise<McpExtensionOAuthActionResult> {
     validateExtensionId(extensionId);
     return this.tryRefresh(extensionId, true);
