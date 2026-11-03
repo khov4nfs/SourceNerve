@@ -73,6 +73,7 @@ mod workflow_http;
 #[cfg(test)]
 mod workflow_integration_tests;
 mod workspace;
+mod workspace_env;
 #[cfg(test)]
 mod workspace_exec_integration_tests;
 mod workspace_process;

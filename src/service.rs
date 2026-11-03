@@ -21,6 +21,7 @@ use crate::{
     error::{AppError, AppResult},
     git, ops,
     workspace::{Workspace, WorkspaceRegistry, WorkspaceView},
+    workspace_env,
 };
 use sandbox::{SandboxEnforcement, SandboxMode};
 
@@ -116,6 +117,10 @@ pub struct WorkspaceExecRequest {
     /// Requested process sandbox. The secure default is workspace-write.
     #[serde(default)]
     pub sandbox: SandboxMode,
+    /// Explicit project .env basename resolved within the selected working directory.
+    /// Omitted by default so unrelated commands never inherit project secrets.
+    #[serde(default)]
+    pub env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -329,6 +334,8 @@ impl AppState {
         }
         let cwd = resolve_command_cwd(&workspace, req.cwd.as_deref()).await?;
         let program = resolve_command_program(&workspace, &req.program).await?;
+        let project_env =
+            workspace_env::read_project_env(&workspace.root, &cwd, req.env_file.as_deref())?;
         let timeout_ms = req.timeout_ms.clamp(100, MAX_COMMAND_TIMEOUT_MS);
         let sandbox_mode = req.sandbox;
         let prepared = sandbox::prepare_command_with_authorization(
@@ -347,6 +354,7 @@ impl AppState {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         sandbox::sanitize_command_environment(&mut command, sandbox_mode)?;
+        command.envs(project_env);
 
         let result: AppResult<WorkspaceExecResponse> =
             match tokio::time::timeout(Duration::from_millis(timeout_ms), command.output()).await {
@@ -394,6 +402,7 @@ impl AppState {
                 "cwd": req.cwd.as_deref().unwrap_or("."),
                 "timeout_ms": timeout_ms,
                 "sandbox": sandbox_mode.as_str(),
+                "env_file": req.env_file.as_deref(),
                 "sandbox_enforcement": enforcement.as_str(),
                 "gui_session_approved": authorization.gui_session_approved,
                 "danger_full_access_approved": authorization.danger_full_access_approved,

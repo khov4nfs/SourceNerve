@@ -1,6 +1,6 @@
 # SourceNerve ChatGPT / Codex plugin packaging
 
-SourceNerve ships one MCP runtime: the Rust Streamable HTTP endpoint at `/mcp`. The package under `plugins/sourcenerve/` adds plugin discovery metadata plus three bundled skills: the guarded repository-change workflow, the default Karpathy-inspired coding guidelines, and the ChatGPT planning/review loop. It does not start or proxy a second MCP server.
+SourceNerve ships one MCP runtime: the Rust Streamable HTTP endpoint at `/mcp`. The package under `plugins/sourcenerve/` adds plugin discovery metadata plus four bundled skills: the guarded repository-change workflow, the default Karpathy-inspired coding guidelines, the ChatGPT planning/review loop, and a Vietnamese Google Workspace Apps Script/AppSheet workflow. It does not start or proxy a second MCP server.
 
 ## Public architecture
 
@@ -31,6 +31,8 @@ plugins/sourcenerve/
     karpathy-guidelines/
       SKILL.md
     repository-change-workflow/
+      SKILL.md
+    google-workspace-apps-script-appsheet/
       SKILL.md
 ```
 
@@ -69,6 +71,9 @@ The repository contains all versioned material needed to fill the OpenAI public 
 - `plugins/sourcenerve/skills/chatgpt-review-loop/SKILL.md` — optional Goal/Loop planner/reviewer protocol for using ChatGPT through the strict read-only review connector while Codex/Harness owns execution;
 - `plugins/sourcenerve/skills/karpathy-guidelines/SKILL.md` — bundled default coding-behavior skill, adapted from `multica-ai/andrej-karpathy-skills` under MIT;
 - `plugins/sourcenerve/skills/repository-change-workflow/SKILL.md` — bundled SourceNerve workflow skill;
+- `plugins/sourcenerve/skills/google-workspace-apps-script-appsheet/SKILL.md` — Vietnamese ChatGPT Chat workflow for the separately authorized clasp MCP extension and AppSheet Editor;
+- `integrations/google-workspace/clasp-mcp.extension.json` — pinned, token-free sample registration for clasp MCP;
+- `docs/google-workspace-chatgpt-agent.md` — Apps Script/AppSheet configuration, validation and deployment boundaries;
 - `docs/plugin-tool-review.md` — annotation values and reviewer justification for every MCP tool;
 - `docs/plugin-submission.md` — listing copy, reviewer-account requirements, domain verification, starter prompts, five positive tests, three negative tests, release notes, and portal checklist;
 - public `/privacy`, `/terms`, `/support`, and `/` pages served by SourceNerve;

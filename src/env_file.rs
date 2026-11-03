@@ -36,7 +36,7 @@ pub fn load_root_env_file() -> Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
-fn parse_env_file(raw: &str) -> Result<BTreeMap<String, String>> {
+pub(crate) fn parse_env_file(raw: &str) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
 
     for (index, original) in raw.lines().enumerate() {

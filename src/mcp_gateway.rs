@@ -328,6 +328,9 @@ pub async fn bridge_catalog(pool: &SqlitePool, principal: &Principal) -> AppResu
 
 pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
     let mut browser_tools = Vec::new();
+    let mut apps_script_tools = Vec::new();
+    let mut apps_script_backends = BTreeSet::new();
+    let mut appsheet_api_tools = Vec::new();
     let mut browser_debug_tools = Vec::new();
     let mut browser_vision_tools = Vec::new();
     let mut computer_tools = Vec::new();
@@ -349,6 +352,42 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
         let chrome_devtools = normalized.contains("chrome-devtools");
         let playwright = normalized.contains("playwright");
         let browser_use = normalized.contains("browser-use") || normalized.contains("browser_use");
+        // Only advertise known clasp MCP operations; capability discovery never
+        // changes extension enablement, per-tool policy or OAuth requirements.
+        let clasp_operation = normalized.strip_prefix("clasp__");
+        let workspace_operation = normalized.strip_prefix("google-workspace__");
+        let clasp_known = clasp_operation.is_some_and(|operation| {
+            matches!(
+                operation,
+                "list_projects" | "clone_project" | "create_project" | "pull_files" | "push_files"
+            )
+        });
+        let workspace_script_known = workspace_operation.is_some_and(|operation| {
+            matches!(
+                operation,
+                "apps_script_get_project"
+                    | "apps_script_get_content"
+                    | "apps_script_update_content"
+                    | "apps_script_create_version"
+                    | "apps_script_create_deployment"
+            )
+        });
+        if (clasp_known || workspace_script_known)
+            && apps_script_tools.len() < MAX_CAPABILITY_TOOL_NAMES
+        {
+            apps_script_tools.push(public_name.to_owned());
+            apps_script_backends.insert(if clasp_known {
+                "clasp-mcp"
+            } else {
+                "desktop-oauth-proxy"
+            });
+        }
+        if workspace_operation.is_some_and(|operation| {
+            matches!(operation, "appsheet_key_status" | "appsheet_find_rows")
+        }) && appsheet_api_tools.len() < MAX_CAPABILITY_TOOL_NAMES
+        {
+            appsheet_api_tools.push(public_name.to_owned());
+        }
         let desktop_control =
             normalized.contains("desktop-control") || normalized.contains("desktop_control");
         let computer_use = normalized.contains("computer-use")
@@ -428,6 +467,20 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
     }
 
     serde_json::json!({
+        "apps_script": {
+            "routable": !apps_script_tools.is_empty(),
+            "backends": apps_script_backends.into_iter().collect::<Vec<_>>(),
+            "tool_names": apps_script_tools,
+            "requires_external_oauth": true,
+            "scope": "authorized-script-tools-only",
+        },
+        "appsheet_api": {
+            "routable": !appsheet_api_tools.is_empty(),
+            "backends": if appsheet_api_tools.is_empty() { Vec::<&str>::new() } else { vec!["desktop-api-key-proxy"] },
+            "tool_names": appsheet_api_tools,
+            "requires_per_app_key": true,
+            "scope": "explicit-app-id-and-region-only",
+        },
         "browser_use": {
             "routable": !browser_tools.is_empty(),
             "backends": browser_backends.into_iter().collect::<Vec<_>>(),
@@ -1042,6 +1095,60 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn apps_script_capability_only_lists_known_authorized_clasp_tools() {
+        let mut clasp = tool(Some(false));
+        clasp.extension_id = "google-clasp-mcp".into();
+        clasp.public_name = "clasp__list_projects".into();
+        clasp.original_name = "list_projects".into();
+        let exposed = public_tool(&clasp).expect("clasp tool");
+        let summary = extension_capability_summary(&[exposed]);
+        assert_eq!(summary["apps_script"]["routable"], true);
+        assert_eq!(summary["apps_script"]["requires_external_oauth"], true);
+        assert_eq!(
+            summary["apps_script"]["tool_names"][0],
+            "clasp__list_projects"
+        );
+        assert_eq!(summary["browser_use"]["routable"], false);
+
+        clasp.public_name = "clasp__arbitrary_tool".into();
+        let unknown = public_tool(&clasp).expect("unknown tool still has schema");
+        let summary = extension_capability_summary(&[unknown]);
+        assert_eq!(summary["apps_script"]["routable"], false);
+        assert!(
+            summary["apps_script"]["tool_names"]
+                .as_array()
+                .expect("tool names array")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn desktop_google_workspace_capabilities_never_imply_oauth_or_appsheet_keys() {
+        let mut script = tool(Some(false));
+        script.extension_id = "sourcenerve-google-workspace".into();
+        script.public_name = "google-workspace__apps_script_get_content".into();
+        script.original_name = "apps_script_get_content".into();
+        let mut appsheet = tool(Some(false));
+        appsheet.extension_id = "sourcenerve-google-workspace".into();
+        appsheet.public_name = "google-workspace__appsheet_find_rows".into();
+        appsheet.original_name = "appsheet_find_rows".into();
+        let summary = extension_capability_summary(&[
+            public_tool(&script).expect("script tool"),
+            public_tool(&appsheet).expect("appsheet tool"),
+        ]);
+        assert_eq!(summary["apps_script"]["routable"], true);
+        assert_eq!(summary["apps_script"]["requires_external_oauth"], true);
+        assert_eq!(summary["apps_script"]["backends"][0], "desktop-oauth-proxy");
+        assert_eq!(summary["appsheet_api"]["routable"], true);
+        assert_eq!(summary["appsheet_api"]["requires_per_app_key"], true);
+        assert_eq!(
+            summary["appsheet_api"]["backends"][0],
+            "desktop-api-key-proxy"
+        );
+        assert_eq!(summary["browser_use"]["routable"], false);
     }
 
     #[test]

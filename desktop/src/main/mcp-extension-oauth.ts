@@ -152,6 +152,7 @@ export class McpExtensionOAuthManager {
       authorization.searchParams.set("code_challenge_method", "S256");
       if (config.scopes.length > 0) authorization.searchParams.set("scope", config.scopes.join(" "));
       if (config.resource) authorization.searchParams.set("resource", config.resource);
+      applyGoogleOfflineOAuthParameters(authorization);
 
       await this.openExternal(authorization.toString());
       const callbackUrl = await loopback.callback;
@@ -170,6 +171,7 @@ export class McpExtensionOAuthManager {
         redirect_uri: loopback.redirectUri,
         code_verifier: verifier,
         ...(config.resource ? { resource: config.resource } : {}),
+        ...(await this.googleWorkspaceSecretField(extensionId)),
       });
       await this.persistTokens(extensionId, token);
       await this.client.materializeCredential(extensionId, token.accessToken);
@@ -183,6 +185,26 @@ export class McpExtensionOAuthManager {
       if (this.pendingLoopback === loopback) this.pendingLoopback = null;
       await loopback.close().catch(() => undefined);
     }
+  }
+
+  /**
+   * Desktop-Main-only access for a first-party API adapter. Never expose this
+   * method through IPC, MCP tool results, telemetry, or the renderer preload.
+   * Refreshes an expired token using OS-backed encrypted storage.
+   */
+  async accessTokenForTrustedRequest(extensionId: string): Promise<string> {
+    validateExtensionId(extensionId);
+    await this.requireConfig(extensionId);
+    const meta = await this.readMeta(extensionId);
+    if (meta?.expiresAt && meta.expiresAt <= Date.now() + EXPIRY_SKEW_MS) {
+      const refreshed = await this.tryRefresh(extensionId, true);
+      if (!refreshed.connected) throw new Error("OAuth reauthorization is required");
+    }
+    const token = await this.secretStore.getOpaque(accessKey(extensionId));
+    if (!token || !safeToken(token)) {
+      throw new Error("OAuth authorization is required before calling Google APIs");
+    }
+    return token;
   }
 
   async refresh(extensionId: string): Promise<McpExtensionOAuthActionResult> {
@@ -255,6 +277,7 @@ export class McpExtensionOAuthManager {
       client_id: clientId,
       refresh_token: refreshToken,
       ...(config.resource ? { resource: config.resource } : {}),
+      ...(await this.googleWorkspaceSecretField(extensionId)),
     });
     if (!token.refreshToken) token.refreshToken = refreshToken;
     await this.persistTokens(extensionId, token);
@@ -265,6 +288,12 @@ export class McpExtensionOAuthManager {
       ...(token.expiresAt ? { expiresAt: token.expiresAt } : {}),
       message: "OAuth access token refreshed and materialized to the local SourceNerve gateway.",
     };
+  }
+
+  private async googleWorkspaceSecretField(extensionId: string): Promise<Record<string, string>> {
+    if (extensionId !== "google-workspace") return {};
+    const value = await this.secretStore.getOpaque("google-workspace:oauth-client-secret");
+    return value ? { client_secret: value } : {};
   }
 
   private async persistTokens(extensionId: string, token: TokenResponse): Promise<void> {
@@ -355,6 +384,26 @@ export class McpExtensionOAuthManager {
     } catch {
       return null;
     }
+  }
+}
+
+/**
+ * Google only returns a reusable refresh token when offline access is
+ * explicitly requested. Keep this provider-specific option pinned to Google's
+ * official authorization endpoint; do not modify unrelated MCP OAuth servers.
+ *
+ * This helps HTTPS MCP extensions with Google OAuth. It does NOT authorize a
+ * clasp STDIO process, which uses an isolated credential file in its own HOME.
+ */
+export function applyGoogleOfflineOAuthParameters(authorization: URL): void {
+  if (
+    authorization.protocol === "https:" &&
+    authorization.hostname === "accounts.google.com" &&
+    authorization.pathname === "/o/oauth2/v2/auth"
+  ) {
+    authorization.searchParams.set("access_type", "offline");
+    // Installed applications must re-consent to changed scope sets. Google
+    // does not support incremental authorization for native Desktop clients.
   }
 }
 

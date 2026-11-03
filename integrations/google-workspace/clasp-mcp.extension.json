@@ -1,0 +1,19 @@
+{
+  "id": "google-clasp-mcp",
+  "name": "Google Apps Script (clasp MCP)",
+  "version": "3.4.1",
+  "namespace": "clasp",
+  "source": "https://github.com/google/clasp",
+  "transport": {
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@google/clasp@3.4.1",
+      "mcp"
+    ]
+  },
+  "auth_type": "none",
+  "required": false,
+  "update_channel": "stable"
+}

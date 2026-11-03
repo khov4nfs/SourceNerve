@@ -384,7 +384,7 @@ fn stable_local_tool(name: &str) -> Option<Tool> {
             }),
         ),
         WORKSPACE_EXEC_TOOL => (
-            "Run one bounded local command inside a configured read-write workspace and return captured stdout/stderr. The environment is sanitized so SourceNerve/provider credentials are not inherited. Use for tests, builds, linters, migrations, project commands, and short runtime/log checks. Even when Git persistence is explicitly requested, prefer guarded git_commit/git_push and use git_commit_push for combined commit-and-push; workspace_exec is not the primary Git delivery path.",
+            "Run one bounded local command inside a configured read-write workspace and return captured stdout/stderr. The environment is sanitized so SourceNerve/provider credentials are not inherited. For project run commands, optionally set env_file to .env (or .env.<name> in cwd); only the child receives bounded project variables. Never print environment secrets. Use for tests, builds, linters, migrations, project commands, and short runtime/log checks. Even when Git persistence is explicitly requested, prefer guarded git_commit/git_push and use git_commit_push for combined commit-and-push; workspace_exec is not the primary Git delivery path.",
             serde_json::json!({
                 "type": "object",
                 "required": ["workspace", "program"],
@@ -398,6 +398,8 @@ fn stable_local_tool(name: &str) -> Option<Tool> {
                         "default": []
                     },
                     "cwd": { "type": ["string", "null"], "default": null },
+                    "env_file": { "type": ["string", "null"], "maxLength": 64, "default": null,
+                        "description": "Optional .env or .env.<name> basename within cwd; values go only to the child process, not MCP results" },
                     "timeout_ms": {
                         "type": "integer",
                         "minimum": 100,

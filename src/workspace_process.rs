@@ -26,6 +26,7 @@ use crate::{
         sandbox::{self, SandboxEnforcement, SandboxMode},
     },
     workspace::Workspace,
+    workspace_env,
 };
 
 const MAX_PROCESS_OUTPUT_BYTES: usize = 1_000_000;
@@ -54,6 +55,9 @@ pub struct WorkspaceProcessStartRequest {
     /// Requested process sandbox. The secure direct-call default is workspace-write.
     #[serde(default)]
     pub sandbox: SandboxMode,
+    /// Opt-in .env basename from this process's working directory, never daemon-wide.
+    #[serde(default)]
+    pub env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -403,6 +407,8 @@ impl AppState {
 
         let cwd = resolve_command_cwd(&workspace, request.cwd.as_deref()).await?;
         let program = resolve_command_program(&workspace, &request.program).await?;
+        let project_env =
+            workspace_env::read_project_env(&workspace.root, &cwd, request.env_file.as_deref())?;
         let sandbox_mode = request.sandbox;
         let prepared = sandbox::prepare_command_with_authorization(
             &workspace.root,
@@ -424,6 +430,7 @@ impl AppState {
             .kill_on_drop(true);
         configure_process_tree(&mut command);
         sandbox::sanitize_command_environment(&mut command, sandbox_mode)?;
+        command.envs(project_env);
 
         let mut child = command.spawn().map_err(|error| {
             AppError::Sandbox(format!(
@@ -645,6 +652,43 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn workspace_process_start_uses_explicit_project_env_file() {
+        let (root, state) = process_fixture().await;
+        std::fs::write(
+            root.path().join("workspace").join(".env"),
+            "PROJECT_MODE=development\nPROJECT_SECRET=not-for-logs\n",
+        )
+        .expect("write fixture .env");
+        let mut request = process_request(
+            SandboxMode::WorkspaceWrite,
+            vec![
+                "-c".into(),
+                "if [ \"$PROJECT_MODE\" = development ]; then printf 'project-env-ok\\n'; fi; sleep 2"
+                    .into(),
+            ],
+            "process:with-env",
+        );
+        request.env_file = Some(".env".into());
+        let started = state
+            .workspace_process_start(request)
+            .await
+            .expect("start project process with .env");
+        wait_for_log(&state, &started.session_id, "project-env-ok").await;
+        let logs = state
+            .workspace_process_logs(WorkspaceProcessLogsRequest {
+                workspace: "process".into(),
+                session_id: started.session_id.clone(),
+                tail_bytes: 64 * 1024,
+            })
+            .await
+            .expect("read project process");
+        assert!(!logs.stdout.contains("not-for-logs"));
+        assert!(!logs.stderr.contains("not-for-logs"));
+        stop_process(&state, started.session_id, "process:with-env-stop").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn workspace_gui_process_start_requires_exact_approval_path() {
         let (_root, state) = process_fixture().await;
         let error = state
@@ -754,6 +798,7 @@ mod tests {
             cwd: None,
             request_id: Some(request_id.into()),
             sandbox,
+            env_file: None,
         }
     }
 

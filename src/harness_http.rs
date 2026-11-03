@@ -42,6 +42,8 @@ struct HarnessCommandExecuteRequest {
     request_id: String,
     timeout_ms: Option<u64>,
     cwd: Option<String>,
+    /// Optional project .env basename; never inherited implicitly.
+    env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +78,8 @@ struct HarnessNativeExecutionFinishRequest {
 struct HarnessNativeVerificationRunRequest {
     run_id: String,
     timeout_ms: Option<u64>,
+    /// Explicit project env file for a verification command that needs it.
+    env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -577,6 +581,7 @@ async fn native_verification_run(
             timeout_ms: request.timeout_ms.unwrap_or(600_000),
             request_id: Some(format!("native-proof:{}", Uuid::new_v4())),
             sandbox: SandboxMode::WorkspaceWrite,
+            env_file: request.env_file.clone(),
         })
         .await;
 
@@ -717,6 +722,7 @@ async fn execute_command(
             timeout_ms: request.timeout_ms.unwrap_or(120_000),
             request_id: Some(request.request_id.clone()),
             sandbox: SandboxMode::WorkspaceWrite,
+            env_file: request.env_file.clone(),
         })
         .await?;
     let (stdout, stdout_truncated) = truncate_harness_command_stream(result.stdout);
@@ -971,6 +977,7 @@ mod tests {
             request_id: "bang-1".into(),
             timeout_ms: Some(120_000),
             cwd: None,
+            env_file: None,
         };
         assert!(validate_harness_command_request(&valid).is_ok());
 
@@ -1014,6 +1021,7 @@ mod tests {
             request_id: "bang-1".into(),
             timeout_ms: Some(120_000),
             cwd: Some("desktop/src".into()),
+            env_file: None,
         };
         assert!(validate_harness_command_request(&base).is_ok());
 

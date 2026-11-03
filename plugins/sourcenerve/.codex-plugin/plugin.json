@@ -1,7 +1,7 @@
 {
   "name": "sourcenerve",
-  "version": "0.3.0",
-  "description": "Persistent repository intelligence and guarded Git/provider workflows for an installation-scoped SourceNerve MCP connection.",
+  "version": "0.4.0",
+  "description": "Guarded repository workflows and Vietnamese ChatGPT agent guidance for Google Apps Script and AppSheet Editor through SourceNerve MCP.",
   "author": {
     "name": "SourceNerve Contributors",
     "url": "https://sourcenerve.fogewise.io.vn/"
@@ -16,13 +16,17 @@
     "git",
     "github",
     "gitlab",
-    "code-review"
+    "code-review",
+    "google-workspace",
+    "apps-script",
+    "appsheet",
+    "browser-use"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "SourceNerve",
-    "shortDescription": "Repository intelligence and guarded code changes",
-    "longDescription": "Inspect authorized repositories through the installation-scoped SourceNerve MCP endpoint created by Desktop. Prepare guarded branches, patches, commits, pushes, issues, pull requests, and explicitly requested merges without exposing repository credentials to the client. This package carries SourceNerve workflow skills only; it never binds ChatGPT or Codex to the central control-plane /mcp URL.",
+    "shortDescription": "Repository workflows, Apps Script and AppSheet editor",
+    "longDescription": "Inspect authorized repositories through the installation-scoped SourceNerve MCP endpoint created by Desktop. Prepare guarded branches, patches, commits, pushes, issues, pull requests, and explicitly requested merges without exposing repository credentials to the client. This package carries SourceNerve workflow skills only; it never binds ChatGPT or Codex to the central control-plane /mcp URL. Includes a Vietnamese workflow skill for connecting a separate user-authorized clasp MCP extension and inspecting or editing AppSheet Views, Actions, Bots and Expressions through permitted Browser/Computer Use tools. Google Workspace credentials and projects are not bundled.",
     "developerName": "SourceNerve Contributors",
     "category": "Developer Tools",
     "capabilities": [
@@ -37,7 +41,9 @@
       "Inspect my authorized repository, summarize its current state, and identify the files most relevant to this task.",
       "Trace the impact of this symbol and explain the affected modules before proposing any code change.",
       "Prepare a guarded feature-branch change for this request, review the complete diff, and open a pull request without merging it.",
-      "Review the current pull request state and tell me whether the exact pushed head is safe to merge; do not merge unless I explicitly ask."
+      "Review the current pull request state and tell me whether the exact pushed head is safe to merge; do not merge unless I explicitly ask.",
+      "Dùng SourceNerve MCP để liệt kê công cụ clasp, kiểm tra Apps Script project đã xác thực và đề xuất thay đổi code kèm kiểm thử trước khi deploy.",
+      "Mở AppSheet Editor của ứng dụng tôi chỉ định và kiểm tra Views, Actions, Bots, Expressions; chưa sửa nếu chưa xác nhận đúng app."
     ],
     "brandColor": "#0F172A",
     "composerIcon": "./assets/icon.png",
