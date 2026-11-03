@@ -126,6 +126,15 @@ export class GoogleWorkspaceManager {
       // Google native apps require fresh consent when scope modes change.
       // Never reuse an earlier token after changing client ID/secret/scopes.
       await this.oauth.remove(GOOGLE_CONNECTION_ID);
+      // The shared OAuth cleanup uses best-effort deletes. Never enable a new
+      // Google scope if a store failure left an old access/refresh token behind.
+      const [staleAccess, staleRefresh] = await Promise.all([
+        this.store.getOpaque("mcp-extension:google-workspace:credential"),
+        this.store.getOpaque("mcp-extension:google-workspace:oauth-refresh"),
+      ]);
+      if (staleAccess || staleRefresh) {
+        throw new Error("Could not clear previous Google OAuth tokens; reconnect is blocked");
+      }
       await this.store.setOpaque(CLIENT_ID_KEY, clientId);
       await this.store.setOpaque(ACCESS_MODE_KEY, mode);
       await this.store.setOpaque(DISCOVERY_KEY, String(discovery));
