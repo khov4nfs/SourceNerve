@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { McpExtensionClient } from "./mcp-extension-client";
-import { McpExtensionOAuthManager, applyGoogleOfflineOAuthParameters } from "./mcp-extension-oauth";
+import { McpExtensionOAuthManager, applyGoogleOfflineOAuthParameters, applyGoogleWorkspaceConsentParameters } from "./mcp-extension-oauth";
 import type { EncryptedSecretStore } from "./secure-store";
 
 afterEach(() => {
@@ -29,6 +29,20 @@ describe("Google Workspace OAuth offline scope handling", () => {
       expect(authorization.searchParams.has("access_type")).toBe(false);
       expect(authorization.searchParams.has("include_granted_scopes")).toBe(false);
     }
+  });
+});
+
+describe("First-party Google Workspace re-consent", () => {
+  it("forces fresh consent only on the official Google Workspace authorization URL", () => {
+    const google = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    applyGoogleWorkspaceConsentParameters(google, "google-workspace");
+    expect(google.searchParams.get("prompt")).toBe("consent");
+    const thirdParty = new URL("https://login.example.test/oauth");
+    applyGoogleWorkspaceConsentParameters(thirdParty, "google-workspace");
+    expect(thirdParty.searchParams.has("prompt")).toBe(false);
+    const otherExtension = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    applyGoogleWorkspaceConsentParameters(otherExtension, "some-other-extension");
+    expect(otherExtension.searchParams.has("prompt")).toBe(false);
   });
 });
 
