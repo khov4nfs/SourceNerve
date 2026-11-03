@@ -79,7 +79,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(manager.googleStatus).toHaveBeenCalledTimes(1);
 
       // A user's disable decision must not be undone by periodic discovery.
-      if (record) record.enabled = false;
+      await client.disable("sourcenerve-google-workspace");
       const enableCount = vi.mocked(client.enable).mock.calls.length;
       await server.reconcile();
       expect(vi.mocked(client.enable)).toHaveBeenCalledTimes(enableCount);
