@@ -360,6 +360,7 @@ async fn materialize_credential(
         )));
     }
     mcp_gateway::materialize_credential(&extension.id, &request.credential).await?;
+    mcp_extension_client::close_persistent_sessions(&extension.id).await;
     Ok(Json(CredentialStatusResponse {
         extension_id: extension.id,
         materialized: true,
@@ -380,6 +381,7 @@ async fn clear_credential(
         )));
     }
     mcp_gateway::clear_materialized_credential(&request.extension_id).await;
+    mcp_extension_client::close_persistent_sessions(&request.extension_id).await;
     Ok(Json(CredentialStatusResponse {
         extension_id: request.extension_id,
         materialized: false,
@@ -408,6 +410,7 @@ async fn materialize_environment(
         )));
     }
     mcp_gateway::materialize_environment(&extension.id, &request.values).await?;
+    mcp_extension_client::close_persistent_sessions(&extension.id).await;
     Ok(Json(EnvironmentStatusResponse {
         extension_id: extension.id,
         materialized: !request.values.is_empty(),
@@ -428,6 +431,7 @@ async fn clear_environment(
         )));
     }
     mcp_gateway::clear_materialized_environment(&request.extension_id).await;
+    mcp_extension_client::close_persistent_sessions(&request.extension_id).await;
     Ok(Json(EnvironmentStatusResponse {
         extension_id: request.extension_id,
         materialized: false,
