@@ -20,12 +20,13 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    ops, workspace_env,
+    ops,
     service::{
         AppState,
         sandbox::{self, SandboxEnforcement, SandboxMode},
     },
     workspace::Workspace,
+    workspace_env,
 };
 
 const MAX_PROCESS_OUTPUT_BYTES: usize = 1_000_000;
@@ -406,11 +407,8 @@ impl AppState {
 
         let cwd = resolve_command_cwd(&workspace, request.cwd.as_deref()).await?;
         let program = resolve_command_program(&workspace, &request.program).await?;
-        let project_env = workspace_env::read_project_env(
-            &workspace.root,
-            &cwd,
-            request.env_file.as_deref(),
-        )?;
+        let project_env =
+            workspace_env::read_project_env(&workspace.root, &cwd, request.env_file.as_deref())?;
         let sandbox_mode = request.sandbox;
         let prepared = sandbox::prepare_command_with_authorization(
             &workspace.root,
