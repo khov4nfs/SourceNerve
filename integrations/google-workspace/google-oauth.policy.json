@@ -25,7 +25,7 @@
       "https://www.googleapis.com/auth/script.deployments"
     ]
   },
-  "consent": "incremental_only_as_needed",
+  "consent": "explicit_scope_mode_reconsent_for_desktop",
   "credential_storage": "os_encrypted_secure_store_per_account_and_installation",
   "app_script_api": "google_oauth_access_token_only_with_explicit_script_id",
   "clasp_mcp_auth": "separate_isolated_credential_bootstrap_required",
