@@ -9,8 +9,9 @@ use super::harness_approval::{self, ApprovalIntent};
 use crate::{
     conversation_scope,
     error::{AppError, AppResult},
-    harness, plugin_hub_runtime,
+    harness,
     mcp_extension_policy::{ToolClassification, complete_known_browser_classification},
+    plugin_hub_runtime,
     principal::Principal,
     service::AppState,
 };
