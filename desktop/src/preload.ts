@@ -312,7 +312,7 @@ const extensionApi: McpExtensionApi = {
 
 const googleWorkspaceApi: GoogleWorkspaceApi = {
   status: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.status),
-  configure: (clientId, mode) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.configure, clientId, mode),
+  configure: (clientId, mode, clientSecret) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.configure, clientId, mode, clientSecret),
   connect: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.connect),
   disconnect: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.disconnect),
   scriptProject: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptProject, scriptId),
