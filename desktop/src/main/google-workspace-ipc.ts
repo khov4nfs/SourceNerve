@@ -25,7 +25,7 @@ export function installGoogleWorkspaceIpcHandlers(context: GoogleWorkspaceIpcCon
       try {
         switch (channel) {
           case GOOGLE_WORKSPACE_IPC.status: return ok(await manager.googleStatus());
-          case GOOGLE_WORKSPACE_IPC.configure: return ok(await manager.configureGoogle(args[0] as string, args[1] as GoogleScriptAccessMode));
+          case GOOGLE_WORKSPACE_IPC.configure: return ok(await manager.configureGoogle(args[0] as string, args[1] as GoogleScriptAccessMode, args[2] as string | undefined));
           case GOOGLE_WORKSPACE_IPC.connect: return ok(await manager.connectGoogle());
           case GOOGLE_WORKSPACE_IPC.disconnect: return ok(await manager.disconnectGoogle());
           case GOOGLE_WORKSPACE_IPC.scriptProject: return ok(await manager.getAppsScriptProject(args[0] as string));
@@ -63,8 +63,9 @@ export function validateGoogleWorkspaceIpc(channel: string, args: readonly unkno
     case GOOGLE_WORKSPACE_IPC.disconnect:
       return args.length === 0;
     case GOOGLE_WORKSPACE_IPC.configure:
-      return args.length === 2 && googleClientId(args[0]) &&
-        ["read", "edit", "deploy"].includes(args[1] as string);
+      return (args.length === 2 || args.length === 3) && googleClientId(args[0]) &&
+        ["read", "edit", "deploy"].includes(args[1] as string) &&
+        (args.length === 2 || args[2] === undefined || bounded(args[2], 1, 1024));
     case GOOGLE_WORKSPACE_IPC.scriptProject:
     case GOOGLE_WORKSPACE_IPC.scriptContent:
       return args.length === 1 && scriptId(args[0]);
