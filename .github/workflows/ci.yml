@@ -64,6 +64,13 @@ jobs:
       - name: Install Desktop dependencies
         run: npm install --no-audit --no-fund
 
+      # Temporary PR diagnostic to synchronize the checked-in lockfile with
+      # npm's resolution. Emits only public npm package metadata, no secrets.
+      - name: Export regenerated lockfile chunks for PR synchronization
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/workspace-free-browser-mcp-classification'
+        run: |
+          node -e 'const fs = require("node:fs"); const data = fs.readFileSync("package-lock.json", "utf8"); for (let i = 0; i < data.length; i += 8000) console.log("LOCK_CHUNK_" + i + ":" + JSON.stringify(data.slice(i, i + 8000)));'
+
       - name: Validate Desktop dependency tree
         run: npm ls --all
 
