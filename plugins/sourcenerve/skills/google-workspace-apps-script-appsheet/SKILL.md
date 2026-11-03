@@ -9,7 +9,7 @@ description: Use ChatGPT Chat through SourceNerve MCP to inspect, edit, test, an
 
 ## 1. Chọn đúng bề mặt
 
-- **Apps Script source:** Ưu tiên extension MCP `clasp` đã đăng ký trong SourceNerve; với repository code đã được cấu hình, có thể dùng SourceNerve workspace file/Git và `workspace_exec` để lint/test. GitHub là nơi review và lưu nguồn; Google Apps Script là nơi chạy/deploy.
+- **Apps Script source:** Ưu tiên first-party SourceNerve MCP extension `sourcenerve-google-workspace` (namespace `google-workspace`) khi đã được cài/enable, vì dùng Google OAuth trong Desktop secure store, không cần đưa token vào HOME của clasp; nếu chưa có first-party bridge mới xét extension MCP `clasp` đã đăng ký trong SourceNerve; với repository code đã được cấu hình, có thể dùng SourceNerve workspace file/Git và `workspace_exec` để lint/test. GitHub là nơi review và lưu nguồn; Google Apps Script là nơi chạy/deploy.
 - **AppSheet Editor configuration:** Chỉ dùng Chrome DevTools Browser Use với phiên đã đăng nhập để sửa Views, Actions, Bots và Expressions. Desktop Control chỉ là phương án dự phòng khi browser DOM/a11y không đủ và người dùng cho phép tương tác foreground cụ thể.
 - **AppSheet REST API:** Dùng để thao tác bảng dữ liệu hoặc gọi action đã định nghĩa, **không** nhầm API dữ liệu với API sửa cấu hình Views/Bots trong Editor.
 - Browser/Computer Use không bắt buộc chọn Git workspace. Thao tác đọc/sửa repository và shell vẫn phải dùng workspace được SourceNerve cho phép.
