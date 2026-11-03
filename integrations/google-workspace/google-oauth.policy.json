@@ -23,6 +23,9 @@
     ],
     "apps_script_deploy": [
       "https://www.googleapis.com/auth/script.deployments"
+    ],
+    "apps_script_discovery_opt_in": [
+      "https://www.googleapis.com/auth/drive.metadata.readonly"
     ]
   },
   "consent": "explicit_scope_mode_reconsent_for_desktop",
