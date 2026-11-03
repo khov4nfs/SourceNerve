@@ -32,6 +32,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       listTools: vi.fn(async () => [
         { original_name: "google_workspace_status" },
         { original_name: "apps_script_get_content" },
+        { original_name: "apps_script_list_projects" },
         { original_name: "apps_script_update_content" },
         { original_name: "apps_script_create_deployment" },
         { original_name: "appsheet_find_rows" },
@@ -53,6 +54,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(policies.find((p) => p.toolName === "apps_script_create_deployment")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "appsheet_find_rows")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "google_workspace_status")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_list_projects")?.approval).toBe("automatic");
 
       const send = async (authorization: string, method: string, params: Record<string, unknown> = {}) => {
         return fetch(server.url(), {
@@ -68,6 +70,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(allowed.status).toBe(200);
       const catalog = await allowed.json() as { result: { tools: Array<{ name: string }> } };
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_get_content")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_projects")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "appsheet_key_set")).toBe(false);
 
       const result = await send(`Bearer ${credential}`, "tools/call", {
