@@ -8,6 +8,12 @@ const GOOGLE_CONNECTION_ID = "google-workspace";
 const CLIENT_ID_KEY = "google-workspace:client-id";
 const CLIENT_SECRET_KEY = "google-workspace:oauth-client-secret";
 const ACCESS_MODE_KEY = "google-workspace:access-mode";
+const DISCOVERY_KEY = "google-workspace:project-discovery-enabled";
+const DRIVE_METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
+const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
+const SCRIPT_MIME_TYPE = "application/vnd.google-apps.script";
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
 const APP_SCRIPT_BASE = "https://script.googleapis.com/v1/projects";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -22,12 +28,28 @@ export interface GoogleWorkspaceStatus {
   configured: boolean;
   connected: boolean;
   mode: GoogleScriptAccessMode | null;
+  projectDiscoveryEnabled: boolean;
   expiresAt?: number;
 }
 export interface AppSheetAppStatus {
   appId: string;
   region: string;
   configured: boolean;
+}
+export interface AppsScriptProjectListInput {
+  pageSize?: number;
+  pageToken?: string;
+}
+export interface AppsScriptProjectSummary {
+  scriptId: string;
+  name: string;
+  modifiedTime: string | null;
+  editorUrl: string;
+}
+export interface AppsScriptProjectList {
+  projects: AppsScriptProjectSummary[];
+  nextPageToken: string | null;
+  incompleteSearch: boolean;
 }
 export interface AppsScriptFile {
   name: string;
@@ -84,6 +106,7 @@ export class GoogleWorkspaceManager {
     clientId: string,
     mode: GoogleScriptAccessMode,
     clientSecret?: string,
+    discoveryEnabled?: boolean,
   ): Promise<GoogleWorkspaceStatus> {
     if (!validGoogleClientId(clientId)) throw new Error("Invalid Google Desktop OAuth client ID");
     if (!validMode(mode)) throw new Error("Invalid Google Apps Script permission mode");
@@ -94,7 +117,10 @@ export class GoogleWorkspaceManager {
     const oldClientId = await this.store.getOpaque(CLIENT_ID_KEY);
     const oldMode = await this.store.getOpaque(ACCESS_MODE_KEY);
     const oldSecret = await this.store.getOpaque(CLIENT_SECRET_KEY);
+    const oldDiscoveryEnabled = (await this.store.getOpaque(DISCOVERY_KEY)) === "true";
+    const discovery = discoveryEnabled ?? oldDiscoveryEnabled;
     const credentialChanged = oldClientId !== clientId || oldMode !== mode ||
+      oldDiscoveryEnabled !== discovery ||
       (clientSecret !== undefined && oldSecret !== clientSecret);
     if (credentialChanged) {
       // Google native apps require fresh consent when scope modes change.
@@ -102,6 +128,7 @@ export class GoogleWorkspaceManager {
       await this.oauth.remove(GOOGLE_CONNECTION_ID);
       await this.store.setOpaque(CLIENT_ID_KEY, clientId);
       await this.store.setOpaque(ACCESS_MODE_KEY, mode);
+      await this.store.setOpaque(DISCOVERY_KEY, String(discovery));
       if (oldClientId !== clientId && clientSecret === undefined) {
         await this.store.deleteOpaque(CLIENT_SECRET_KEY);
       }
@@ -112,15 +139,16 @@ export class GoogleWorkspaceManager {
       tokenEndpoint: "https://oauth2.googleapis.com/token",
       revokeEndpoint: "https://oauth2.googleapis.com/revoke",
       clientId,
-      scopes: scopesForMode(mode),
+      scopes: scopesForMode(mode, discovery),
     });
     return this.googleStatus();
   }
 
   async googleStatus(): Promise<GoogleWorkspaceStatus> {
-    const [savedId, savedMode, status] = await Promise.all([
+    const [savedId, savedMode, discoveryEnabled, status] = await Promise.all([
       this.store.getOpaque(CLIENT_ID_KEY),
       this.store.getOpaque(ACCESS_MODE_KEY),
+      this.store.getOpaque(DISCOVERY_KEY),
       this.oauth.status(GOOGLE_CONNECTION_ID),
     ]);
     const mode = validMode(savedMode) ? savedMode : null;
@@ -128,8 +156,27 @@ export class GoogleWorkspaceManager {
       configured: Boolean(savedId && status.configured && mode),
       connected: Boolean(savedId && status.connected && mode),
       mode,
+      projectDiscoveryEnabled: discoveryEnabled === "true",
       ...(status.expiresAt ? { expiresAt: status.expiresAt } : {}),
     };
+  }
+
+  /**
+   * Explicit opt-in to Drive metadata. Native Google OAuth cannot incrementally
+   * add a scope to an existing consent, so invalidate the previous token and
+   * require the user to complete the loopback OAuth flow again.
+   */
+  async enableProjectDiscovery(): Promise<GoogleWorkspaceStatus> {
+    const [clientId, mode, alreadyEnabled] = await Promise.all([
+      this.store.getOpaque(CLIENT_ID_KEY),
+      this.store.getOpaque(ACCESS_MODE_KEY),
+      this.store.getOpaque(DISCOVERY_KEY),
+    ]);
+    if (!clientId || !validMode(mode)) {
+      throw new Error("Configure Google OAuth before enabling Apps Script discovery");
+    }
+    if (alreadyEnabled === "true") return this.googleStatus();
+    return this.configureGoogle(clientId, mode, undefined, true);
   }
 
   async connectGoogle(): Promise<GoogleWorkspaceStatus> {
@@ -148,6 +195,65 @@ export class GoogleWorkspaceManager {
 
   async shutdown(): Promise<void> {
     await this.oauth.shutdown();
+  }
+
+  /**
+   * Drive metadata only: list standalone Apps Script files accessible to the
+   * connected Google account. Bound projects are not files in Drive.
+   * Never request content, owner identities, permissions or download URLs.
+   */
+  async listAppsScriptProjects(input: AppsScriptProjectListInput = {}): Promise<AppsScriptProjectList> {
+    const { pageSize = DEFAULT_PAGE_SIZE, pageToken } = input;
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
+      throw new Error("Apps Script pageSize must be an integer from 1 to 100");
+    }
+    if (pageToken !== undefined && !validPageToken(pageToken)) {
+      throw new Error("Invalid Apps Script pagination token");
+    }
+    const status = await this.googleStatus();
+    if (!status.projectDiscoveryEnabled) {
+      throw new Error("Google Drive metadata access is not enabled; enable project discovery and authorize again");
+    }
+    const token = await this.oauth.accessTokenForTrustedRequest(GOOGLE_CONNECTION_ID);
+    const url = new URL(DRIVE_FILES_URL);
+    url.searchParams.set("q", `mimeType = '${SCRIPT_MIME_TYPE}' and trashed = false`);
+    url.searchParams.set("fields", "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)");
+    url.searchParams.set("pageSize", String(pageSize));
+    url.searchParams.set("orderBy", "modifiedTime desc");
+    url.searchParams.set("spaces", "drive");
+    url.searchParams.set("corpora", "user");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const response = await this.fetcher(url.toString(), {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/json",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const payload = await safeJsonResponse(response, MAX_RESPONSE_BYTES, "Google Drive");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("Google Drive returned malformed project list");
+    }
+    const data = payload as Record<string, unknown>;
+    if (!Array.isArray(data.files) || data.files.length > pageSize || !data.files.every(validDriveScript)) {
+      throw new Error("Google Drive returned invalid Apps Script metadata");
+    }
+    if (data.nextPageToken !== undefined && !validPageToken(data.nextPageToken)) {
+      throw new Error("Google Drive returned an invalid next-page token");
+    }
+    return {
+      projects: data.files.map((entry: DriveScriptMetadata): AppsScriptProjectSummary => ({
+        scriptId: entry.id,
+        name: entry.name,
+        modifiedTime: entry.modifiedTime ?? null,
+        editorUrl: `https://script.google.com/d/${encodeURIComponent(entry.id)}/edit`,
+      })),
+      nextPageToken: data.nextPageToken ?? null,
+      incompleteSearch: data.incompleteSearch === true,
+    };
   }
 
   async getAppsScriptProject(scriptId: string): Promise<Record<string, unknown>> {
@@ -304,6 +410,25 @@ export function scriptPath(scriptId: string): string {
   return "/" + encodeURIComponent(scriptId);
 }
 
+interface DriveScriptMetadata {
+  id: string;
+  name: string;
+  mimeType: typeof SCRIPT_MIME_TYPE;
+  modifiedTime?: string;
+}
+function validPageToken(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 4096 &&
+    !/[\r\n\0]/.test(value);
+}
+function validDriveScript(value: unknown): value is DriveScriptMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const file = value as Record<string, unknown>;
+  return typeof file.id === "string" && /^[A-Za-z0-9_-]{12,160}$/.test(file.id) &&
+    typeof file.name === "string" && file.name.length > 0 && file.name.length <= 512 &&
+    file.mimeType === SCRIPT_MIME_TYPE &&
+    (file.modifiedTime === undefined || (typeof file.modifiedTime === "string" &&
+      !Number.isNaN(Date.parse(file.modifiedTime)) && file.modifiedTime.length <= 64));
+}
 function validScriptFile(value: unknown): value is AppsScriptFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const file = value as Record<string, unknown>;
@@ -326,12 +451,13 @@ function validMode(value: unknown): value is GoogleScriptAccessMode {
 function modeAllows(actual: GoogleScriptAccessMode, requested: GoogleScriptAccessMode): boolean {
   return requested === "read" || actual === "deploy" || (actual === "edit" && requested === "edit");
 }
-function scopesForMode(mode: GoogleScriptAccessMode): string[] {
+function scopesForMode(mode: GoogleScriptAccessMode, projectDiscoveryEnabled: boolean): string[] {
   return [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     mode === "read" ? READ_SCOPE : EDIT_SCOPE,
     mode === "deploy" ? DEPLOY_SCOPE : DEPLOY_READ_SCOPE,
+    ...(projectDiscoveryEnabled ? [DRIVE_METADATA_SCOPE] : []),
   ];
 }
 function validateAppSheetTarget(appId: string, region: string): void {
