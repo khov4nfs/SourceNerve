@@ -15,6 +15,7 @@ const regionalEndpoints = [
 export function GoogleWorkspacePanel() {
   const [status, setStatus] = useState<GoogleWorkspaceStatus | null>(null);
   const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [mode, setMode] = useState<GoogleScriptAccessMode>("read");
   const [scriptId, setScriptId] = useState("");
   const [scriptSummary, setScriptSummary] = useState("");
@@ -75,6 +76,12 @@ export function GoogleWorkspacePanel() {
               value={clientId} onChange={(event) => setClientId(event.target.value)} />
           </label>
           <label className="block text-xs space-y-1">
+            <span>Client secret (tùy chọn, chỉ nếu Google OAuth Client yêu cầu)</span>
+            <input aria-label="Google Desktop OAuth optional client secret" type="password"
+              autoComplete="off" className={fieldClass} value={clientSecret}
+              onChange={(event) => setClientSecret(event.target.value)} />
+          </label>
+          <label className="block text-xs space-y-1">
             <span>Phạm vi quyền yêu cầu</span>
             <select aria-label="Google Apps Script access mode" className={fieldClass}
               value={mode} onChange={(event) => setMode(event.target.value as GoogleScriptAccessMode)}>
@@ -86,11 +93,12 @@ export function GoogleWorkspacePanel() {
           <div className="flex flex-wrap gap-2">
             <ActionButton size="sm" disabled={Boolean(busy) || !clientId.trim()}
               onClick={() => void perform("configure", async () => {
-                const response = await api.configure(clientId.trim(), mode);
+                const response = await api.configure(clientId.trim(), mode, clientSecret || undefined);
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
-                setMessage("Đã lưu Client ID và phạm vi OAuth. Chưa tự cấp quyền.");
+                setMessage("Đã lưu OAuth Desktop Client và phạm vi quyền. Đổi scope sẽ yêu cầu consent lại; chưa tự cấp quyền.");
                 setClientId("");
+                setClientSecret("");
               })}>Lưu cấu hình</ActionButton>
             <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || !status?.configured}
               onClick={() => void perform("connect", async () => {
