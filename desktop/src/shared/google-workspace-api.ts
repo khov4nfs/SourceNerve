@@ -35,7 +35,7 @@ export interface AppSheetKeyInput {
 }
 export interface GoogleWorkspaceApi {
   status(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
-  configure(clientId: string, mode: GoogleScriptAccessMode): Promise<DesktopResult<GoogleWorkspaceStatus>>;
+  configure(clientId: string, mode: GoogleScriptAccessMode, clientSecret?: string): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   connect(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   disconnect(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   scriptProject(scriptId: string): Promise<DesktopResult<Record<string, unknown>>>;
