@@ -16,6 +16,9 @@ const MAX_ENV_ENTRIES: usize = 128;
 const MAX_ENV_VALUE_BYTES: usize = 8 * 1024;
 
 fn valid_env_filename(name: &str) -> bool {
+    if name.len() > 64 {
+        return false;
+    }
     name == ".env"
         || name
             .strip_prefix(".env.")
