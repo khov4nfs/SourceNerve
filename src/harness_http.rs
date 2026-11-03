@@ -42,6 +42,8 @@ struct HarnessCommandExecuteRequest {
     request_id: String,
     timeout_ms: Option<u64>,
     cwd: Option<String>,
+    /// Optional project .env basename; never inherited implicitly.
+    env_file: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -577,6 +579,7 @@ async fn native_verification_run(
             timeout_ms: request.timeout_ms.unwrap_or(600_000),
             request_id: Some(format!("native-proof:{}", Uuid::new_v4())),
             sandbox: SandboxMode::WorkspaceWrite,
+            env_file: None,
         })
         .await;
 
@@ -717,6 +720,7 @@ async fn execute_command(
             timeout_ms: request.timeout_ms.unwrap_or(120_000),
             request_id: Some(request.request_id.clone()),
             sandbox: SandboxMode::WorkspaceWrite,
+            env_file: request.env_file.clone(),
         })
         .await?;
     let (stdout, stdout_truncated) = truncate_harness_command_stream(result.stdout);
