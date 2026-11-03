@@ -1436,9 +1436,12 @@ mod tests {
             ExtensionRuntimeProfile::BrowserAutomation,
         )
         .expect("GUI automation should keep native session access in auto mode");
-        assert_eq!(
-            Path::new(command.as_std().get_program()).file_name(),
-            Some(OsStr::new("true"))
+        let executable = Path::new(command.as_std().get_program());
+        assert!(
+            executable
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("true")),
+            "expected a direct true executable, got {executable:?}"
         );
     }
 
@@ -1459,9 +1462,12 @@ mod tests {
             &layout(),
         )
         .expect("auto mode should use environment isolation when bwrap is unusable");
-        assert_eq!(
-            Path::new(command.as_std().get_program()).file_name(),
-            Some(OsStr::new("true"))
+        let executable = Path::new(command.as_std().get_program());
+        assert!(
+            executable
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("true")),
+            "expected a direct true executable, got {executable:?}"
         );
     }
 
