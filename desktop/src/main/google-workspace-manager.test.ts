@@ -115,6 +115,21 @@ describe("Google Workspace Desktop secure adapters", () => {
     await f.manager.shutdown();
   });
 
+  it("fails closed if secure storage cannot delete an old Google token during scope upgrade", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "read");
+    f.secrets.set("mcp-extension:google-workspace:credential", "old-consented-token");
+    vi.mocked(f.store.deleteOpaque).mockImplementation(async (key: string) => {
+      if (key !== "mcp-extension:google-workspace:credential") f.secrets.delete(key);
+    });
+    await expect(f.manager.enableProjectDiscovery()).rejects.toThrow(
+      "Could not clear previous Google OAuth tokens",
+    );
+    expect((await f.manager.googleStatus()).projectDiscoveryEnabled).toBe(false);
+    expect(f.fetcher).not.toHaveBeenCalled();
+    await f.manager.shutdown();
+  });
+
   it("never sends a Drive request without explicit metadata consent", async () => {
     const f = fixture();
     await readConnected(f);
