@@ -111,6 +111,7 @@ enum CapabilityClass {
     Exec,
     Git,
     Provider,
+    ProviderReview,
     Job,
 }
 
@@ -123,6 +124,7 @@ impl CapabilityClass {
             Self::Exec => "exec",
             Self::Git => "git",
             Self::Provider => "provider",
+            Self::ProviderReview => "provider-review",
             Self::Job => "job",
         }
     }
@@ -142,6 +144,7 @@ struct ProfileSpec {
     exec: Policy,
     git: Policy,
     provider: Policy,
+    provider_review: Policy,
     job: Policy,
 }
 
@@ -154,6 +157,7 @@ impl ProfileSpec {
             CapabilityClass::Exec => self.exec,
             CapabilityClass::Git => self.git,
             CapabilityClass::Provider => self.provider,
+            CapabilityClass::ProviderReview => self.provider_review,
             CapabilityClass::Job => self.job,
         }
     }
@@ -169,6 +173,10 @@ impl ProfileSpec {
                 ("exec".to_string(), self.exec.as_str().to_string()),
                 ("git".to_string(), self.git.as_str().to_string()),
                 ("provider".to_string(), self.provider.as_str().to_string()),
+                (
+                    "provider_review".to_string(),
+                    self.provider_review.as_str().to_string(),
+                ),
                 ("job".to_string(), self.job.as_str().to_string()),
             ]),
         }
@@ -480,6 +488,18 @@ const CORE_CAPABILITIES: &[CoreCapability] = &[
         false
     ),
     core_capability!(
+        "core.provider.review",
+        "core.provider",
+        "GitHub pull request review submission",
+        "provider-review",
+        CapabilityClass::ProviderReview,
+        false,
+        false,
+        false,
+        true,
+        true
+    ),
+    core_capability!(
         "core.provider.mutate",
         "core.provider",
         "Protected provider mutation",
@@ -563,6 +583,7 @@ fn profile_spec(name: &str) -> AppResult<ProfileSpec> {
             exec: Policy::Deny,
             git: Policy::Deny,
             provider: Policy::Deny,
+            provider_review: Policy::Deny,
             job: Policy::Deny,
         },
         "interactive-local" => ProfileSpec {
@@ -574,6 +595,7 @@ fn profile_spec(name: &str) -> AppResult<ProfileSpec> {
             exec: Policy::Allow,
             git: Policy::Ask,
             provider: Policy::Ask,
+            provider_review: Policy::Allow,
             job: Policy::Allow,
         },
         "guarded-durable" => ProfileSpec {
@@ -585,6 +607,7 @@ fn profile_spec(name: &str) -> AppResult<ProfileSpec> {
             exec: Policy::Ask,
             git: Policy::Ask,
             provider: Policy::Ask,
+            provider_review: Policy::Ask,
             job: Policy::Allow,
         },
         "background-job" => ProfileSpec {
@@ -596,6 +619,7 @@ fn profile_spec(name: &str) -> AppResult<ProfileSpec> {
             exec: Policy::Deny,
             git: Policy::Deny,
             provider: Policy::Deny,
+            provider_review: Policy::Deny,
             job: Policy::Allow,
         },
         "webhook-automation" => ProfileSpec {
@@ -607,6 +631,7 @@ fn profile_spec(name: &str) -> AppResult<ProfileSpec> {
             exec: Policy::Deny,
             git: Policy::Deny,
             provider: Policy::Deny,
+            provider_review: Policy::Deny,
             job: Policy::Allow,
         },
         _ => {
@@ -937,6 +962,29 @@ mod tests {
         );
         let guarded = profile_spec("guarded-durable").unwrap();
         assert_eq!(guarded.policy_for(CapabilityClass::Exec), Policy::Ask);
+    }
+
+    #[test]
+    fn interactive_review_is_narrowly_allowed_but_provider_mutations_still_ask() {
+        let interactive = profile_spec("interactive-local").unwrap();
+        assert_eq!(
+            interactive.policy_for(CapabilityClass::ProviderReview),
+            Policy::Allow
+        );
+        assert_eq!(interactive.policy_for(CapabilityClass::Provider), Policy::Ask);
+        assert_eq!(
+            profile_spec("guarded-durable")
+                .unwrap()
+                .policy_for(CapabilityClass::ProviderReview),
+            Policy::Ask
+        );
+        assert_eq!(
+            profile_spec("read-only-analysis")
+                .unwrap()
+                .policy_for(CapabilityClass::ProviderReview),
+            Policy::Deny
+        );
+        assert!(CapabilityClass::ProviderReview.requires_writable_workspace());
     }
 
     #[test]
