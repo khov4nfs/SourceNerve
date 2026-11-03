@@ -1813,10 +1813,7 @@ mod tests {
             static_capability_id("github_pull_create"),
             Some("core.provider.mutate")
         );
-        assert_eq!(
-            static_capability_id("git_push"),
-            Some("core.git.mutate")
-        );
+        assert_eq!(static_capability_id("git_push"), Some("core.git.mutate"));
     }
 
     #[test]
