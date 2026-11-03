@@ -152,6 +152,7 @@ export class McpExtensionOAuthManager {
       authorization.searchParams.set("code_challenge_method", "S256");
       if (config.scopes.length > 0) authorization.searchParams.set("scope", config.scopes.join(" "));
       if (config.resource) authorization.searchParams.set("resource", config.resource);
+      applyGoogleOfflineOAuthParameters(authorization);
 
       await this.openExternal(authorization.toString());
       const callbackUrl = await loopback.callback;
@@ -355,6 +356,25 @@ export class McpExtensionOAuthManager {
     } catch {
       return null;
     }
+  }
+}
+
+/**
+ * Google only returns a reusable refresh token when offline access is
+ * explicitly requested. Keep this provider-specific option pinned to Google's
+ * official authorization endpoint; do not modify unrelated MCP OAuth servers.
+ *
+ * This helps HTTPS MCP extensions with Google OAuth. It does NOT authorize a
+ * clasp STDIO process, which uses an isolated credential file in its own HOME.
+ */
+export function applyGoogleOfflineOAuthParameters(authorization: URL): void {
+  if (
+    authorization.protocol === "https:" &&
+    authorization.hostname === "accounts.google.com" &&
+    authorization.pathname === "/o/oauth2/v2/auth"
+  ) {
+    authorization.searchParams.set("access_type", "offline");
+    authorization.searchParams.set("include_granted_scopes", "true");
   }
 }
 
