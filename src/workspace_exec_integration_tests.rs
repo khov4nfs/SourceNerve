@@ -63,7 +63,8 @@ async fn workspace_exec_loads_project_env_only_for_explicitly_selected_command()
         "PROJECT_GREETING=hello-world\nPROJECT_PRIVATE_VALUE=top-secret-test-value\n",
     )
     .expect("fixture .env");
-    let request = |name: &str, env_file| WorkspaceExecRequest {
+    let request = |name: &str, env_file| {
+        WorkspaceExecRequest {
         workspace: "exec".into(),
         program: "sh".into(),
         args: vec![
@@ -76,6 +77,7 @@ async fn workspace_exec_loads_project_env_only_for_explicitly_selected_command()
         request_id: Some(name.into()),
         sandbox: Default::default(),
         env_file,
+    }
     };
 
     let opted_out = state
