@@ -45,6 +45,19 @@ describe("Google Workspace Desktop secure adapters", () => {
     await f.manager.shutdown();
   });
 
+  it("keeps an optional Google Desktop client secret encrypted and forces re-consent on scope changes", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "read", "desktop-secret-for-test");
+    expect(f.secrets.get("google-workspace:oauth-client-secret")).toBe("desktop-secret-for-test");
+    f.secrets.set("mcp-extension:google-workspace:credential", "old-read-token");
+    await f.manager.configureGoogle(CLIENT_ID, "deploy");
+    expect(f.secrets.has("mcp-extension:google-workspace:credential")).toBe(false);
+    expect(f.secrets.get("google-workspace:oauth-client-secret")).toBe("desktop-secret-for-test");
+    expect((await f.manager.googleStatus()).mode).toBe("deploy");
+    expect((await f.manager.googleStatus()).connected).toBe(false);
+    await f.manager.shutdown();
+  });
+
   it("reads Apps Script content with Bearer authorization only in a Google HTTPS request", async () => {
     const f = fixture();
     await readConnected(f);
