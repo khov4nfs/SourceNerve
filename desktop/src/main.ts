@@ -48,6 +48,7 @@ import {
   publishRuntimeEvent,
 } from "./main/ipc";
 import { GoogleWorkspaceManager } from "./main/google-workspace-manager";
+import { GoogleWorkspaceMcpServer } from "./main/google-workspace-mcp-server";
 import { installGoogleWorkspaceIpcHandlers } from "./main/google-workspace-ipc";
 import { McpExtensionClient } from "./main/mcp-extension-client";
 import { installMcpExtensionIpcHandlers } from "./main/mcp-extension-ipc";
@@ -119,6 +120,7 @@ let desktopControlPreferences: DesktopControlPreferencesStore | null = null;
 let codexSkillCache: CodexSkillCache | null = null;
 let mcpExtensionManager: McpExtensionManager | null = null;
 let googleWorkspaceManager: GoogleWorkspaceManager | null = null;
+let googleWorkspaceMcpServer: GoogleWorkspaceMcpServer | null = null;
 let providerWorkflowManager: ProviderWorkflowManager | null = null;
 let pluginVerificationManager: PluginVerificationManager | null = null;
 let migrationManager: MigrationManager | null = null;
@@ -568,6 +570,23 @@ async function initializeBootstrap(): Promise<void> {
         timestamp: new Date().toISOString(),
       });
     });
+    if (googleWorkspaceManager) {
+      googleWorkspaceMcpServer = new GoogleWorkspaceMcpServer({
+        manager: googleWorkspaceManager,
+        client: mcpExtensionClient,
+        version: app.getVersion(),
+      });
+      await googleWorkspaceMcpServer.start();
+      await googleWorkspaceMcpServer.reconcile().catch((error) => {
+        publishMainRuntimeEvent({
+          type: "log",
+          component: "desktop",
+          level: "warn",
+          message: `Google Workspace MCP registration deferred: ${error instanceof Error ? error.message : "gateway unavailable"}`,
+          timestamp: new Date().toISOString(),
+        });
+      });
+    }
     if (desktopControlBridge) {
       desktopControlMcpServer = new DesktopControlMcpServer({
         bridge: desktopControlBridge,
@@ -896,6 +915,7 @@ app.on("before-quit", (event) => {
 });
 
 async function shutdownForQuit(managedDaemon: DaemonManager | null): Promise<void> {
+  await googleWorkspaceMcpServer?.stop().catch(() => undefined);
   await googleWorkspaceManager?.shutdown().catch(() => undefined);
   await publicMcpManager?.shutdown().catch(() => undefined);
   await desktopControlMcpServer?.stop().catch(() => undefined);
