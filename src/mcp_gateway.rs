@@ -376,7 +376,11 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
             && apps_script_tools.len() < MAX_CAPABILITY_TOOL_NAMES
         {
             apps_script_tools.push(public_name.to_owned());
-            apps_script_backends.insert(if clasp_known { "clasp-mcp" } else { "desktop-oauth-proxy" });
+            apps_script_backends.insert(if clasp_known {
+                "clasp-mcp"
+            } else {
+                "desktop-oauth-proxy"
+            });
         }
         if workspace_operation.is_some_and(|operation| {
             matches!(operation, "appsheet_key_status" | "appsheet_find_rows")
@@ -1140,7 +1144,10 @@ mod tests {
         assert_eq!(summary["apps_script"]["backends"][0], "desktop-oauth-proxy");
         assert_eq!(summary["appsheet_api"]["routable"], true);
         assert_eq!(summary["appsheet_api"]["requires_per_app_key"], true);
-        assert_eq!(summary["appsheet_api"]["backends"][0], "desktop-api-key-proxy");
+        assert_eq!(
+            summary["appsheet_api"]["backends"][0],
+            "desktop-api-key-proxy"
+        );
         assert_eq!(summary["browser_use"]["routable"], false);
     }
 
