@@ -1,6 +1,6 @@
 # SourceNerve Google OAuth / Apps Script / AppSheet — thiết kế ủy quyền
 
-**Trạng thái:** Design + policy contract; **chưa** phải OAuth connection đang hoạt động. SourceNerve Desktop hiện có `McpExtensionOAuthManager` với PKCE/loopback và encrypted secret store, nhưng cơ chế này materialize **Bearer token vào HTTP MCP transport**; `@google/clasp mcp` là STDIO và yêu cầu credentials riêng trong HOME. Không được mô tả `OAuth connected` cho clasp chỉ vì đã lấy được token.
+**Trạng thái:** Design + policy contract; **chưa** phải OAuth connection đang hoạt động. SourceNerve Desktop hiện có `McpExtensionOAuthManager` với PKCE/loopback và encrypted secret store. Đã bổ sung lựa chọn `access_type=offline` và `include_granted_scopes=true` riêng cho URL Google OAuth chính thức để chuẩn bị refresh token, có unit test chống áp dụng cho provider khác. Tuy vậy cơ chế hiện tại materialize **Bearer token vào HTTP MCP transport**; `@google/clasp mcp` là STDIO và yêu cầu credentials riêng trong HOME. Không được mô tả `OAuth connected` cho clasp chỉ vì đã lấy được token.
 
 ## Tách ba loại quyền
 
