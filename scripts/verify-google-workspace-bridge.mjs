@@ -68,7 +68,7 @@ assert.equal(oauthPolicy.token_endpoint, "https://oauth2.googleapis.com/token");
 assert.equal(oauthPolicy.credential_storage, "os_encrypted_secure_store_per_account_and_installation");
 assert.equal(oauthPolicy.appsheet.data_api, "per_app_application_access_key_enterprise_only");
 assert.equal(oauthPolicy.appsheet.editor, "interactive_google_sign_in_in_browser");
-assert.equal(oauthPolicy.consent, "incremental_only_as_needed");
+assert.equal(oauthPolicy.consent, "explicit_scope_mode_reconsent_for_desktop");
 assert.ok(oauthPolicy.scope_sets.apps_script_read.includes("https://www.googleapis.com/auth/script.projects.readonly"));
 assert.ok(oauthPolicy.scope_sets.apps_script_edit.includes("https://www.googleapis.com/auth/script.projects"));
 assert.ok(oauthPolicy.scope_sets.apps_script_deploy.includes("https://www.googleapis.com/auth/script.deployments"));
