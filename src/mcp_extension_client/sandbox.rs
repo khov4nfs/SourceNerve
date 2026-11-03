@@ -1204,14 +1204,12 @@ mod tests {
             ExtensionRuntimeProfile::ComputerUse,
         );
         assert_eq!(
-            ExtensionRuntimeProfile::detect(
-                "sourcenerve-desktop-control",
-                "",
-                &[],
-            ),
+            ExtensionRuntimeProfile::detect("sourcenerve-desktop-control", "", &[],),
             ExtensionRuntimeProfile::ComputerUse,
         );
-        assert!(requires_persistent_http_session("sourcenerve-desktop-control"));
+        assert!(requires_persistent_http_session(
+            "sourcenerve-desktop-control"
+        ));
         assert!(requires_persistent_stdio_session(
             "chrome-devtools-mcp",
             "npx",
