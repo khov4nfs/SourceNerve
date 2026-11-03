@@ -793,7 +793,10 @@ mod tests {
                 }),
             )
             .await;
-            assert!(!result.to_string().contains("dispatcher rejects"), "{result}");
+            assert!(
+                !result.to_string().contains("dispatcher rejects"),
+                "{result}"
+            );
             assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
             let health = admin_get_json(&base, "/api/v1/mcp/extensions/health", bearer).await;
             assert_eq!(health[0]["session_state"], "connected");
