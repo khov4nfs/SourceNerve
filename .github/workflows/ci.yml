@@ -61,8 +61,8 @@ jobs:
         working-directory: .
         run: node --check deploy/pm2/ecosystem.config.cjs
 
-      - name: Install Desktop dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked Desktop dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Validate Desktop dependency tree
         run: npm ls --all

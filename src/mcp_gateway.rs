@@ -19,7 +19,9 @@ use crate::{
         PolicyDecision as AuditPolicyDecision, ResultCategory as AuditResultCategory,
     },
     mcp_extension_client,
-    mcp_extension_policy::{ApprovalMode, PolicyDecision, evaluate_tool_policy},
+    mcp_extension_policy::{
+        ApprovalMode, PolicyDecision, complete_known_browser_classification, evaluate_tool_policy,
+    },
     mcp_extension_registry::{self, ExtensionAuthType, ExtensionRecord, ExtensionToolRecord},
     mcp_extension_runtime,
     principal::Principal,
@@ -476,7 +478,12 @@ pub async fn bridge_call(
         )));
     };
 
-    let is_read_only = route.tool.policy.classification.read_only == Some(true);
+    let is_read_only = complete_known_browser_classification(
+        &route.tool.public_name,
+        route.tool.policy.classification,
+    )
+    .read_only
+        == Some(true);
     let dispatcher_matches = match dispatcher {
         BridgeDispatcher::Read => is_read_only,
         BridgeDispatcher::Write => !is_read_only,
@@ -930,7 +937,8 @@ fn public_tool(tool: &ExtensionToolRecord) -> AppResult<Tool> {
             .unwrap_or_else(|| format!("Forwarded MCP extension tool `{}`", tool.original_name)),
         Arc::new(schema.clone()),
     );
-    let classification = tool.policy.classification;
+    let classification =
+        complete_known_browser_classification(&tool.public_name, tool.policy.classification);
     result.title = Some(title.clone());
     result.output_schema = Some(extension_output_schema(&tool.public_name));
     result.annotations = Some(

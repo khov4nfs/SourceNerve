@@ -71,6 +71,8 @@ impl ExtensionRuntimeProfile {
             "mcp-computer-use",
             "computer-use-mcp",
             "desktop-control-mcp",
+            "sourcenerve-desktop-control",
+            "desktop_control",
             "computer_use",
         ]
         .iter()
@@ -103,8 +105,14 @@ pub(super) fn requires_persistent_stdio_session(
     command: &str,
     args: &[String],
 ) -> bool {
-    ExtensionRuntimeProfile::detect(extension_id, command, args)
-        == ExtensionRuntimeProfile::BrowserAutomation
+    ExtensionRuntimeProfile::detect(extension_id, command, args).needs_gui_session()
+}
+
+/// Keep connections to known browser and desktop MCP servers across tool calls.
+/// Other HTTP extensions retain one-shot clients to avoid retaining unrelated
+/// remote sessions or authentication material unnecessarily.
+pub(super) fn requires_persistent_http_session(extension_id: &str) -> bool {
+    ExtensionRuntimeProfile::detect(extension_id, "", &[]).needs_gui_session()
 }
 
 #[derive(Debug, Clone)]
@@ -1195,6 +1203,24 @@ mod tests {
             ),
             ExtensionRuntimeProfile::ComputerUse,
         );
+        assert_eq!(
+            ExtensionRuntimeProfile::detect("sourcenerve-desktop-control", "", &[],),
+            ExtensionRuntimeProfile::ComputerUse,
+        );
+        assert!(requires_persistent_http_session(
+            "sourcenerve-desktop-control"
+        ));
+        assert!(requires_persistent_stdio_session(
+            "chrome-devtools-mcp",
+            "npx",
+            &["-y".into(), "chrome-devtools-mcp@latest".into()],
+        ));
+        assert!(!requires_persistent_http_session("unrelated-provider"));
+        assert!(!requires_persistent_stdio_session(
+            "memory",
+            "npx",
+            &["codebase-memory-mcp".into()],
+        ));
         assert_eq!(
             ExtensionRuntimeProfile::detect("memory", "npx", &["codebase-memory-mcp".into()]),
             ExtensionRuntimeProfile::Default,

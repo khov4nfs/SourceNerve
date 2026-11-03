@@ -9,7 +9,9 @@ use super::harness_approval::{self, ApprovalIntent};
 use crate::{
     conversation_scope,
     error::{AppError, AppResult},
-    harness, plugin_hub_runtime,
+    harness,
+    mcp_extension_policy::{ToolClassification, complete_known_browser_classification},
+    plugin_hub_runtime,
     principal::Principal,
     service::AppState,
 };
@@ -829,11 +831,20 @@ async fn dynamic_tool_safety(state: &AppState, name: &str) -> AppResult<Option<T
     let Some((read_only, destructive, idempotent, open_world)) = row else {
         return Ok(None);
     };
+    let metadata = complete_known_browser_classification(
+        name,
+        ToolClassification {
+            read_only: read_only.map(|value| value != 0),
+            destructive: destructive.map(|value| value != 0),
+            idempotent: idempotent.map(|value| value != 0),
+            open_world: open_world.map(|value| value != 0),
+        },
+    );
     let (Some(read_only), Some(destructive), Some(idempotent), Some(open_world)) = (
-        read_only.map(|value| value != 0),
-        destructive.map(|value| value != 0),
-        idempotent.map(|value| value != 0),
-        open_world.map(|value| value != 0),
+        metadata.read_only,
+        metadata.destructive,
+        metadata.idempotent,
+        metadata.open_world,
     ) else {
         return Ok(None);
     };
@@ -871,6 +882,9 @@ fn static_capability_id(name: &str) -> Option<&'static str> {
         "github_pull_get" | "task_github_pull_get" | "task_provider_pull_get" => {
             Some("core.provider.read")
         }
+        // A review is an explicit non-destructive provider action. Do not
+        // grant the same automatic policy to merges, pushes or PR creation.
+        "github_pull_review" => Some("core.provider.review"),
         name if name.starts_with("github_") || name.starts_with("task_provider_") => {
             Some("core.provider.mutate")
         }
@@ -1783,6 +1797,23 @@ mod tests {
             ),
         ]));
         assert_eq!(request_run_id(&request).as_deref(), Some("run-1"));
+    }
+
+    #[test]
+    fn github_review_uses_narrow_capability_instead_of_provider_mutation() {
+        assert_eq!(
+            static_capability_id("github_pull_review"),
+            Some("core.provider.review")
+        );
+        assert_eq!(
+            static_capability_id("github_pull_merge"),
+            Some("core.provider.mutate")
+        );
+        assert_eq!(
+            static_capability_id("github_pull_create"),
+            Some("core.provider.mutate")
+        );
+        assert_eq!(static_capability_id("git_push"), Some("core.git.mutate"));
     }
 
     #[test]

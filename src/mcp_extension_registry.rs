@@ -9,7 +9,9 @@ use url::Url;
 
 use crate::{
     error::{AppError, AppResult},
-    mcp_extension_policy::{ApprovalMode, ToolClassification, ToolPolicy},
+    mcp_extension_policy::{
+        ApprovalMode, ToolClassification, ToolPolicy, complete_known_browser_classification,
+    },
 };
 
 const MAX_EXTENSION_ID_BYTES: usize = 64;
@@ -553,13 +555,15 @@ fn prepare_tools(namespace: &str, tools: &[DiscoveredTool]) -> AppResult<Vec<Pre
                 "MCP namespace normalization produced a duplicate public tool `{public_name}`"
             )));
         }
+        let classification =
+            complete_known_browser_classification(&public_name, tool.classification);
         prepared.push(PreparedTool {
             original_name: tool.name.clone(),
             public_name,
             description: tool.description.clone(),
             schema_hash: sha256_hex(input_schema_json.as_bytes()),
             input_schema_json,
-            classification: tool.classification,
+            classification,
         });
     }
     Ok(prepared)
