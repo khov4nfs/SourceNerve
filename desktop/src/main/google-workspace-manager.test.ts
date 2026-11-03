@@ -11,7 +11,7 @@ const APP_ID = "abcdefgh12345678";
 const REGION = "www.appsheet.com";
 const files = [
   { name: "appsscript", type: "JSON" as const, source: '{"timeZone":"UTC"}' },
-  { name: "Code", type: "SERVER_JS" as const, source: "function hello() { return 1; }" },
+  { name: "Shared Helpers.v2", type: "SERVER_JS" as const, source: "function hello() { return 1; }" },
 ];
 
 function fixture() {
