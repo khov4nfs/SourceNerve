@@ -42,6 +42,25 @@ unrestricted host shell or a replacement for the permission system.
 - Confirm a disconnected browser MCP session reconnects on a subsequent call
   without replaying ambiguous writes.
 
+## GitHub PR review approvals
+
+`github_pull_review` uses its own `core.provider.review` capability instead of
+the generic `core.provider.mutate` capability. An explicitly requested
+`APPROVE`, `REQUEST_CHANGES` or `COMMENT` submission is automatically allowed
+by the `interactive-local` profile only for a configured writable workspace
+with an authorized GitHub connection.
+
+The `guarded-durable` profile still asks; read-only and unattended profiles
+deny review writes. PR creation, merge, Git push and other provider mutations
+retain their existing policies. Review submission still validates body content,
+supports idempotency, and uses GitHub's normal account permission rules.
+
+A previously pending approval ID is not automatically resumed after an
+upgrade: restart SourceNerve and submit the exact review action again after
+the new capability snapshot is active. GitHub can prohibit approving or
+requesting changes on a PR authored by the same user, in which case SourceNerve
+may fall back to a clearly labeled comment.
+
 ## Non-goals
 
 No universal automatic approval, no bypass of authentication, no
