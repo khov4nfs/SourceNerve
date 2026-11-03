@@ -10,6 +10,7 @@ import type {
 import { ActionButton } from "./atoms/ActionButton";
 import { InlineNotice } from "./molecules/InlineNotice";
 import { Panel } from "./Panel";
+import { GoogleWorkspacePanel } from "./GoogleWorkspacePanel";
 
 interface InstallDraft {
   id: string;
@@ -335,6 +336,7 @@ export function McpExtensionsScreen() {
 
   return (
     <section className="space-y-4" aria-label="MCP Extensions">
+      <GoogleWorkspacePanel />
       <Panel
         title="MCP Extensions"
         eyebrow="SourceNerve Gateway"
