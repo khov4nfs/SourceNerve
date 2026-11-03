@@ -327,7 +327,7 @@ function rpcResult(response: ServerResponse, id: string | number | null | undefi
   send(response, 200, { jsonrpc: "2.0", id: id ?? null, result });
 }
 function rpcError(response: ServerResponse, id: string | number | null | undefined, code: number, message: string): void {
-  send(response, 200, { jsonrpc: "2.0", id: id ?? null, error: { code, message } }, "application/json");
+  send(response, 200, { jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 }
 function send(response: ServerResponse, status: number, body: unknown): void {
   const data = Buffer.from(JSON.stringify(body));
