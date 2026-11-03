@@ -64,6 +64,8 @@ async fn workspace_exec_rejects_unbounded_arguments_before_process_launch() {
             timeout_ms: 120_000,
             request_id: Some("exec:args-bound".into()),
             sandbox: Default::default(),
+            env_file: None,
+            env_file: None,
         })
         .await
         .expect_err("argument count above the bound must fail");
