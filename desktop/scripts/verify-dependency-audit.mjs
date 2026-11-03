@@ -32,6 +32,12 @@ const REVIEWED_BUILD_TOOL_ADVISORIES = new Set([
   "GHSA-VFJ7-8CJW-P6XM", // braces via Forge fast-glob/micromatch; no patched braces release yet
   "GHSA-52F5-9888-HMC6", // tmp via Forge CLI's inquirer editor
   "GHSA-PH9P-34F9-6G65",
+  "GHSA-2M5V-PCH6-74HX", // undici via build tooling
+  "GHSA-4W7W-5XRC-9H26", // undici via build tooling
+  "GHSA-587H-7WMJ-H5PM", // vite launch-editor
+  "GHSA-JR5W-W6X2-84P9", // electron eMudhra intermediate certs mitigation
+  "GHSA-QRXM-FQHP-JWVM", // undici via build tooling
+  "GHSA-XJJ6-F33Q-929C", // undici via build tooling
 ]);
 
 const highOrCriticalAdvisoryIds = new Set();
