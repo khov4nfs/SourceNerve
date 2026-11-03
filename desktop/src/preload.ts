@@ -123,6 +123,10 @@ import {
   type McpMarketplaceUpdateResult,
 } from "./shared/mcp-extension-api";
 import {
+  GOOGLE_WORKSPACE_IPC,
+  type GoogleWorkspaceApi,
+} from "./shared/google-workspace-api";
+import {
   PLUGIN_VERIFICATION_IPC,
   type PluginCopyResult,
   type PluginDomainChallengeInput,
@@ -306,5 +310,24 @@ const extensionApi: McpExtensionApi = {
   rollbackMarketplace: (extensionId: string) => ipcRenderer.invoke(MCP_EXTENSION_IPC.marketplaceRollback, extensionId) as Promise<DesktopResult<McpMarketplaceRollbackResult>>,
 };
 
+const googleWorkspaceApi: GoogleWorkspaceApi = {
+  status: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.status),
+  configure: (clientId, mode) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.configure, clientId, mode),
+  connect: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.connect),
+  disconnect: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.disconnect),
+  scriptProject: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptProject, scriptId),
+  scriptContent: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptContent, scriptId),
+  updateScript: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.updateScript, input),
+  createVersion: (scriptId, description, confirmed) =>
+    ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.createVersion, scriptId, description, confirmed),
+  createDeployment: (scriptId, versionNumber, description, confirmed) =>
+    ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.createDeployment, scriptId, versionNumber, description, confirmed),
+  appSheetKeyStatus: (appId, region) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.appSheetKeyStatus, appId, region),
+  appSheetSetKey: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.appSheetSetKey, input),
+  appSheetClearKey: (appId, region) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.appSheetClearKey, appId, region),
+  appSheetFind: (appId, region, table) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.appSheetFind, appId, region, table),
+};
+
+contextBridge.exposeInMainWorld("sourcenerveGoogleWorkspace", googleWorkspaceApi);
 contextBridge.exposeInMainWorld("sourcenerveDesktop", api);
 contextBridge.exposeInMainWorld("sourcenerveMcpExtensions", extensionApi);
