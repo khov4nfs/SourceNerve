@@ -43,7 +43,19 @@ describe("Google Workspace first-party MCP gateway", () => {
       remove: vi.fn(async () => { record = null; }),
     } as unknown as McpExtensionClient;
     const manager = {
-      googleStatus: vi.fn(async () => ({ configured: false, connected: false, mode: null })),
+      googleStatus: vi.fn(async () => ({
+        configured: false, connected: false, mode: null, projectDiscoveryEnabled: false,
+      })),
+      listAppsScriptProjects: vi.fn(async () => ({
+        projects: [{
+          scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+          name: "Example project",
+          modifiedTime: "2026-11-04T00:00:00.000Z",
+          editorUrl: "https://script.google.com/d/abcdefghijklmnopqrstuvwxy1234567890/edit",
+        }],
+        nextPageToken: "page2",
+        incompleteSearch: false,
+      })),
     } as unknown as GoogleWorkspaceManager;
     const server = new GoogleWorkspaceMcpServer({ manager, client, version: "0.1.44" });
     await server.start();
@@ -80,6 +92,18 @@ describe("Google Workspace first-party MCP gateway", () => {
       const payload = await result.json() as { result: { structuredContent: { configured: boolean } } };
       expect(payload.result.structuredContent.configured).toBe(false);
       expect(manager.googleStatus).toHaveBeenCalledTimes(1);
+
+      const listed = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_list_projects",
+        arguments: { pageSize: 20, pageToken: "page1" },
+      });
+      expect(listed.status).toBe(200);
+      const listing = await listed.json() as {
+        result: { structuredContent: { projects: Array<{ name: string }>; nextPageToken: string } };
+      };
+      expect(listing.result.structuredContent.projects[0].name).toBe("Example project");
+      expect(listing.result.structuredContent.nextPageToken).toBe("page2");
+      expect(manager.listAppsScriptProjects).toHaveBeenCalledWith({ pageSize: 20, pageToken: "page1" });
 
       // A user's disable decision must not be undone by periodic discovery.
       await client.disable("sourcenerve-google-workspace");
