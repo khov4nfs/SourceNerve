@@ -16,7 +16,7 @@ description: Use ChatGPT Chat through SourceNerve MCP to inspect, edit, test, an
 
 ## 2. Apps Script — kiểm tra kết nối và quyền
 
-1. Gọi `mcp_extension_catalog`, tìm `clasp__*` và kiểm tra schema/safety của từng tool thay vì đoán tên. Nếu chưa cài, dùng mẫu `integrations/google-workspace/clasp-mcp.extension.json` trong giao diện Plugins + MCP của SourceNerve. Mẫu chạy **@google/clasp@3.4.1**, không dùng `latest`.
+1. Gọi `mcp_extension_catalog`, kiểm tra `capabilities.apps_script.routable` và `tool_names` (nếu SourceNerve đã cập nhật), tìm `clasp__*` và kiểm tra schema/safety của từng tool thay vì đoán tên. Nếu chưa cài, dùng mẫu `integrations/google-workspace/clasp-mcp.extension.json` trong giao diện Plugins + MCP của SourceNerve. Mẫu chạy **@google/clasp@3.4.1**, không dùng `latest`.
 2. Bật Google Apps Script API ở `https://script.google.com/home/usersettings` với tài khoản sở hữu script.
 3. Đảm bảo clasp đã được người dùng đăng nhập bằng OAuth trong **HOME riêng của extension**. SourceNerve không chia sẻ `~/.clasprc.json` của host với MCP sandbox. Không yêu cầu người dùng dán refresh token, mật khẩu hoặc `.clasprc.json` vào hội thoại/GitHub; không vô hiệu hóa sandbox. Nếu chưa có luồng cấp OAuth vào môi trường biệt lập một cách hợp lệ, báo **BLOCKED (authentication)**; không đoán rằng `clasp login` ngoài host đã đủ.
 4. Dùng `list_projects` để xem script có thể truy cập, sau đó dùng **script ID do kết quả thực hoặc người dùng cung cấp**. Đừng tự chọn một project nếu có nhiều project khả dĩ.
