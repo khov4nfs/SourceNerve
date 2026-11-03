@@ -148,6 +148,9 @@ async fn discover_stdio(
     environment: Option<&BTreeMap<String, String>>,
     lease: &RuntimeLease,
 ) -> AppResult<Vec<DiscoveredTool>> {
+    if sandbox::requires_persistent_stdio_session(&extension.id, command, args) {
+        return discover_persistent_stdio(extension, command, args, environment, lease).await;
+    }
     let mut last_error = None;
     for attempt in 0..mcp_extension_runtime::MAX_CONNECT_ATTEMPTS {
         mcp_extension_runtime::ensure_current(lease)?;
@@ -214,6 +217,59 @@ async fn discover_stdio(
             extension.id
         ))
     }))
+}
+
+/// Discovery shares the same persistent GUI process used by subsequent calls,
+/// preventing Chrome/Playwright browser state from being discarded after setup.
+async fn discover_persistent_stdio(
+    extension: &ExtensionRecord,
+    command: &str,
+    args: &[String],
+    environment: Option<&BTreeMap<String, String>>,
+    lease: &RuntimeLease,
+) -> AppResult<Vec<DiscoveredTool>> {
+    let slot = persistent_stdio_slot(&extension.id).await;
+    let config_hash = stdio_session_config_hash(command, args, environment);
+    let mut session = slot.lock().await;
+    let replace = session
+        .as_ref()
+        .is_none_or(|current| current.config_hash != config_hash || current.client.is_closed());
+    if replace {
+        if let Some(current) = session.take() {
+            close_stdio_session(current).await;
+        }
+        let client = connect_stdio_client(extension, command, args, environment, lease).await?;
+        *session = Some(PersistentStdioSession {
+            config_hash,
+            client,
+        });
+    }
+
+    mcp_extension_runtime::ensure_current(lease)?;
+    let result = {
+        let client = &session.as_ref().expect("persistent stdio session").client;
+        match timeout(LIST_TIMEOUT, client.list_all_tools()).await {
+            Ok(Ok(tools)) => Ok(tools),
+            Ok(Err(error)) => Err(client_error(extension, "tools/list failed", error)),
+            Err(_) => Err(client_timeout(extension, "tools/list", LIST_TIMEOUT)),
+        }
+    };
+    if result.is_err() && let Some(current) = session.take() {
+        close_stdio_session(current).await;
+    }
+    drop(session);
+    mcp_extension_runtime::ensure_current(lease)?;
+    match result {
+        Ok(tools) => {
+            mcp_extension_runtime::mark_ready(&extension.id).await?;
+            Ok(tools.iter().map(discovered_tool).collect())
+        }
+        Err(error) => {
+            let category = mcp_extension_runtime::classify_error(&error);
+            mcp_extension_runtime::mark_failure(&extension.id, category).await?;
+            Err(error)
+        }
+    }
 }
 
 async fn call_stdio(
