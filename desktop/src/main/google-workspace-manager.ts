@@ -6,6 +6,7 @@ import type { McpExtensionClient } from "./mcp-extension-client";
 
 const GOOGLE_CONNECTION_ID = "google-workspace";
 const CLIENT_ID_KEY = "google-workspace:client-id";
+const CLIENT_SECRET_KEY = "google-workspace:oauth-client-secret";
 const ACCESS_MODE_KEY = "google-workspace:access-mode";
 const APP_SCRIPT_BASE = "https://script.googleapis.com/v1/projects";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -79,17 +80,32 @@ export class GoogleWorkspaceManager {
     });
   }
 
-  async configureGoogle(clientId: string, mode: GoogleScriptAccessMode): Promise<GoogleWorkspaceStatus> {
+  async configureGoogle(
+    clientId: string,
+    mode: GoogleScriptAccessMode,
+    clientSecret?: string,
+  ): Promise<GoogleWorkspaceStatus> {
     if (!validGoogleClientId(clientId)) throw new Error("Invalid Google Desktop OAuth client ID");
     if (!validMode(mode)) throw new Error("Invalid Google Apps Script permission mode");
+    if (clientSecret !== undefined &&
+        (clientSecret.length < 1 || clientSecret.length > 1024 || /[\r\n\0]/.test(clientSecret))) {
+      throw new Error("Invalid optional Google Desktop OAuth client secret");
+    }
     const oldClientId = await this.store.getOpaque(CLIENT_ID_KEY);
     const oldMode = await this.store.getOpaque(ACCESS_MODE_KEY);
-    if (oldClientId !== clientId || oldMode !== mode) {
-      // Existing tokens might have different scopes or belong to a different
-      // OAuth client. Never reuse them after configuration changes.
+    const oldSecret = await this.store.getOpaque(CLIENT_SECRET_KEY);
+    const credentialChanged = oldClientId !== clientId || oldMode !== mode ||
+      (clientSecret !== undefined && oldSecret !== clientSecret);
+    if (credentialChanged) {
+      // Google native apps require fresh consent when scope modes change.
+      // Never reuse an earlier token after changing client ID/secret/scopes.
       await this.oauth.remove(GOOGLE_CONNECTION_ID);
       await this.store.setOpaque(CLIENT_ID_KEY, clientId);
       await this.store.setOpaque(ACCESS_MODE_KEY, mode);
+      if (oldClientId !== clientId && clientSecret === undefined) {
+        await this.store.deleteOpaque(CLIENT_SECRET_KEY);
+      }
+      if (clientSecret !== undefined) await this.store.setOpaque(CLIENT_SECRET_KEY, clientSecret);
     }
     await this.oauth.saveConfig(GOOGLE_CONNECTION_ID, {
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
