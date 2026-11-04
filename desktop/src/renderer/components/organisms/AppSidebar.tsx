@@ -59,7 +59,7 @@ export function AppSidebar({
             {workspaces.length === 0 ? (
               <div className="space-y-2 px-2.5 py-2">
                 <p className="text-[11px] leading-5 text-muted-foreground">
-                  Use <code>/workspace add</code> in Harness or click below to add a project repository.
+                  Use <code>/workspace add</code> in Harness.
                 </p>
                 {onAddWorkspace ? (
                   <button
