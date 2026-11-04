@@ -238,7 +238,7 @@ export function GoogleWorkspacePanel() {
                 value={commentFileName} onChange={(event) => {
                   setCommentFileName(event.target.value);
                   setCommentPreview(null);
-                }} placeholder="PMT_Lich_Hoat_Dong_Automation" />
+                }} placeholder="Code" />
             </label>
             <label className="block text-xs space-y-1">
               <span>Đúng một dòng comment, bắt đầu bằng // </span>
