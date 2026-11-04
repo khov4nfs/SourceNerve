@@ -300,7 +300,14 @@ export function GoogleWorkspacePanel() {
                 <p>{patchEdits.length} chỉnh sửa đã chọn:</p>
                 <ul className="list-disc pl-4">
                   {patchEdits.map((edit, index) => (
-                    <li key={index}>{edit.fileName} · {edit.operation}</li>
+                    <li key={index} className="space-y-1">
+                      <p>{edit.fileName} · {edit.operation}</p>
+                      {edit.operation === "replace_exact" && (
+                        <pre className="overflow-auto whitespace-pre-wrap break-all rounded border border-border p-2">{edit.findText}</pre>
+                      )}
+                      <p>{edit.operation === "replace_exact" ? "Thành:" : "Chèn:"}</p>
+                      <pre className="overflow-auto whitespace-pre-wrap break-all rounded border border-border p-2">{edit.text || "(xóa đoạn khớp)"}</pre>
+                    </li>
                   ))}
                 </ul>
               </div>
