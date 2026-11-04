@@ -660,7 +660,8 @@ export function validateAppsScriptEdits(edits: AppsScriptTextEdit[]): void {
         Object.keys(edit).some((key) => !["fileName", "operation", "findText", "text"].includes(key)) ||
         !validScriptFileName(edit.fileName) ||
         !["replace_exact", "prepend", "append"].includes(edit.operation) ||
-        typeof edit.text !== "string" || edit.text.length < 1 || Buffer.byteLength(edit.text) > 8192 ||
+        typeof edit.text !== "string" || (edit.operation !== "replace_exact" && edit.text.length < 1) ||
+        Buffer.byteLength(edit.text) > 8192 ||
         /\0/.test(edit.text)) {
       throw new Error("Invalid Apps Script text edit");
     }
@@ -694,7 +695,6 @@ function buildAppsScriptPatch(
   if (new Set(next.map((file) => file.name)).size !== next.length) {
     throw new Error("Apps Script file names are ambiguous; refusing patch");
   }
-  const changed = new Set<string>();
   for (const edit of edits) {
     const file = next.find((entry) => entry.name === edit.fileName);
     if (!file) throw new Error("Apps Script patch file not found in HEAD");
@@ -718,12 +718,13 @@ function buildAppsScriptPatch(
       try { JSON.parse(file.source); }
       catch { throw new Error("Apps Script JSON file must remain valid after patch"); }
     }
-    if (file.source !== before) changed.add(file.name);
   }
   if (Buffer.byteLength(JSON.stringify({ files: next })) > MAX_RESPONSE_BYTES) {
     throw new Error("Apps Script patched project exceeds size limit");
   }
-  return { files: next, changedFiles: [...changed] };
+  const changedFiles = next.filter((file, index) => file.source !== files[index].source)
+    .map((file) => file.name);
+  return { files: next, changedFiles };
 }
 function validateScriptCommentPatch(input: AppsScriptCommentPatchInput): void {
   scriptPath(input.scriptId);
