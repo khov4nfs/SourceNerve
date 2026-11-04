@@ -24,6 +24,7 @@ export function OnboardingWizard({
   onInstallCodex,
   onLoginCodex,
   onRetryCurrent,
+  onAddWorkspace,
 }: {
   signals: OnboardingSignals;
   codexSetup: DesktopHarnessCodexSetupView | null;
@@ -35,6 +36,7 @@ export function OnboardingWizard({
   onInstallCodex(): Promise<void>;
   onLoginCodex(): Promise<void>;
   onRetryCurrent(): Promise<void>;
+  onAddWorkspace?(): Promise<void> | void;
 }) {
   const current = recommendedOnboardingStep(signals);
   const views = onboardingStepViews(signals);
@@ -73,6 +75,7 @@ export function OnboardingWizard({
           onInstallCodex={onInstallCodex}
           onLoginCodex={onLoginCodex}
           onRetryCurrent={onRetryCurrent}
+          onAddWorkspace={onAddWorkspace}
         />
         <OnboardingHealthCard layers={layers} />
       </div>

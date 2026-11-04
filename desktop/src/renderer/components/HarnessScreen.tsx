@@ -13,11 +13,13 @@ export function HarnessScreen({
   selectedWorkspaceId,
   onWorkspaceSelected,
   onWorkspacesChanged,
+  onAddWorkspace,
 }: {
   workspaces: ManagedWorkspaceView[];
   selectedWorkspaceId: string | null;
   onWorkspaceSelected(workspaceId: string): void;
   onWorkspacesChanged(): Promise<void>;
+  onAddWorkspace?(): Promise<void> | void;
 }) {
   const [runs, setRuns] = useState<DesktopHarnessRunView[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -140,6 +142,7 @@ export function HarnessScreen({
         onChanged={async () => { await refreshRuns(selectedRunId ?? undefined, true); }}
         onWorkspaceSelected={onWorkspaceSelected}
         onWorkspacesChanged={onWorkspacesChanged}
+        onAddWorkspace={onAddWorkspace}
       />
     </div>
   );

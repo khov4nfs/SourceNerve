@@ -218,6 +218,39 @@ export function App() {
     openRoute("harness");
   }
 
+  async function addWorkspace(): Promise<void> {
+    setOnboardingError(null);
+    try {
+      const picked = await window.sourcenerveDesktop.pickWorkspaceRepository();
+      if (!picked.ok) {
+        setOnboardingError(`Workspace: ${picked.error.message}`);
+        return;
+      }
+      if (!picked.value) return;
+      const selection = picked.value;
+      const access = selection.localWritable ? "read-write" : "read-only";
+      const saved = await window.sourcenerveDesktop.saveWorkspace({
+        selectionId: selection.selectionId,
+        id: selection.suggestedId,
+        name: selection.suggestedName,
+        access,
+        remote: selection.remote,
+        defaultBranch: selection.defaultBranch,
+      });
+      if (!saved.ok) {
+        setOnboardingError(`Workspace: ${saved.error.message}`);
+        return;
+      }
+      await refreshRuntimeState();
+      if (saved.value.validation.state === "ready" && saved.value.access === "read-write" && saved.value.localWritable) {
+        setSelectedWorkspaceId(saved.value.id);
+        openRoute("harness");
+      }
+    } catch (actionError) {
+      setOnboardingError(actionError instanceof Error ? actionError.message : "Failed to add workspace.");
+    }
+  }
+
   async function installCodex(): Promise<void> {
     setOnboardingError(null);
     const result = await window.sourcenerveDesktop.installHarnessCodex();
@@ -282,6 +315,7 @@ export function App() {
         selectedWorkspaceId={selectedWorkspaceId}
         onWorkspaceSelect={selectWorkspace}
         onOpenSettings={openSettings}
+        onAddWorkspace={addWorkspace}
       >
       {onboardingActive ? (
         <OnboardingWizard
@@ -295,6 +329,7 @@ export function App() {
           onInstallCodex={installCodex}
           onLoginCodex={loginCodex}
           onRetryCurrent={retryCurrentOnboardingLayer}
+          onAddWorkspace={addWorkspace}
         />
       ) : (
         <>
@@ -309,6 +344,7 @@ export function App() {
                 selectedWorkspaceId={selectedWorkspaceId}
                 onWorkspaceSelected={setSelectedWorkspaceId}
                 onWorkspacesChanged={refreshRuntimeState}
+                onAddWorkspace={addWorkspace}
               />
             )
             : route === "pull-requests" ? <ProviderWorkflowScreen />
