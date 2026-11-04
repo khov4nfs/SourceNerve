@@ -702,7 +702,7 @@ function buildAppsScriptPatch(
     if (edit.operation === "replace_exact") {
       const needle = edit.findText!;
       const first = before.indexOf(needle);
-      if (first < 0 || before.indexOf(needle, first + needle.length) >= 0) {
+      if (first < 0 || before.indexOf(needle, first + 1) >= 0) {
         throw new Error("Exact patch text must occur exactly once; re-preview with a unique context");
       }
       file.source = before.slice(0, first) + edit.text + before.slice(first + needle.length);
