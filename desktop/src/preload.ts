@@ -320,6 +320,8 @@ const googleWorkspaceApi: GoogleWorkspaceApi = {
   scriptProject: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptProject, scriptId),
   scriptContent: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptContent, scriptId),
   updateScript: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.updateScript, input),
+  previewScriptComment: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.previewScriptComment, input),
+  applyScriptComment: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.applyScriptComment, input),
   createVersion: (scriptId, description, confirmed) =>
     ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.createVersion, scriptId, description, confirmed),
   createDeployment: (scriptId, versionNumber, description, confirmed) =>
