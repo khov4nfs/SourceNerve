@@ -93,6 +93,148 @@ describe("Google Workspace Desktop secure adapters", () => {
     await f.manager.shutdown();
   });
 
+  it("previews and applies a minimal comment without returning project source through MCP", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    const original = [
+      ...files,
+      { name: "Other", type: "HTML" as const, source: "<div>keep this private</div>" },
+    ];
+    const commentLine = "// SourceNerve: kiểm tra cập nhật Apps Script từ ChatGPT.";
+    const patched = original.map((file) =>
+      file.name === "Shared Helpers.v2"
+        ? { ...file, source: commentLine + "\n" + file.source }
+        : file,
+    );
+    const content = (payload: typeof original) => new Response(JSON.stringify({ files: payload }));
+    f.fetcher.mockResolvedValueOnce(content(original))  // preview
+      .mockResolvedValueOnce(content(original))        // apply preflight
+      .mockResolvedValueOnce(content(original))        // updateContent preflight
+      .mockResolvedValueOnce(content(patched))         // PUT result
+      .mockResolvedValueOnce(content(patched));        // post-write verification
+
+    const preview = await f.manager.previewAppsScriptComment({ scriptId: SCRIPT_ID, commentLine });
+    expect(preview).toEqual({
+      scriptId: SCRIPT_ID,
+      fileName: "Shared Helpers.v2",
+      commentLine,
+      position: "file-start",
+      expectedFingerprint: contentFingerprint(original),
+      wouldChange: true,
+      fileCount: 3,
+      manifestPreserved: true,
+    });
+    expect(JSON.stringify(preview)).not.toContain("keep this private");
+    expect(JSON.stringify(preview)).not.toContain("function hello");
+
+    const applied = await f.manager.applyAppsScriptComment({
+      scriptId: SCRIPT_ID, fileName: preview.fileName, commentLine,
+      expectedFingerprint: preview.expectedFingerprint, confirmed: true,
+    });
+    expect(applied).toEqual({
+      scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2",
+      previousFingerprint: contentFingerprint(original),
+      newFingerprint: contentFingerprint(patched),
+      changed: true, verified: true,
+    });
+    expect(f.fetcher).toHaveBeenCalledTimes(5);
+    expect(f.fetcher.mock.calls.map(([, init]) => init?.method))
+      .toEqual(["GET", "GET", "GET", "PUT", "GET"]);
+    const put = f.fetcher.mock.calls[3];
+    const body = JSON.parse(put[1]?.body as string) as { files: typeof original };
+    expect(body.files).toEqual(patched);
+    expect(body.files[0]).toEqual(original[0]); // manifest unchanged
+    expect(body.files[2]).toEqual(original[2]); // unrelated file unchanged
+    expect(JSON.stringify(applied)).not.toContain("keep this private");
+    expect(JSON.stringify(applied)).not.toContain("test-edit-token");
+    await f.manager.shutdown();
+  });
+
+  it("refuses stale fingerprints and never sends a PUT", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    f.fetcher.mockResolvedValue(new Response(JSON.stringify({ files })));
+    const commentLine = "// small safe test";
+    await expect(f.manager.applyAppsScriptComment({
+      scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2", commentLine,
+      expectedFingerprint: "0".repeat(64), confirmed: true,
+    })).rejects.toThrow(/remote content changed/);
+    expect(f.fetcher).toHaveBeenCalledTimes(1);
+    expect(f.fetcher.mock.calls[0][1]?.method).toBe("GET");
+    await f.manager.shutdown();
+  });
+
+  it("is idempotent when the exact first-line comment already exists", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    const commentLine = "// Already present";
+    const existing = files.map((file) => file.type === "SERVER_JS"
+      ? { ...file, source: commentLine + "\n" + file.source } : file);
+    f.fetcher.mockResolvedValue(new Response(JSON.stringify({ files: existing })));
+    const preview = await f.manager.previewAppsScriptComment({ scriptId: SCRIPT_ID, commentLine });
+    expect(preview.wouldChange).toBe(false);
+    const result = await f.manager.applyAppsScriptComment({
+      scriptId: SCRIPT_ID, fileName: preview.fileName, commentLine,
+      expectedFingerprint: preview.expectedFingerprint, confirmed: true,
+    });
+    expect(result.changed).toBe(false);
+    expect(result.verified).toBe(true);
+    expect(f.fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(["GET", "GET"]);
+    await f.manager.shutdown();
+  });
+
+  it("rejects multiline and ambiguous or unauthorized comment patches", async () => {
+    const f = fixture();
+    await readConnected(f); // read-only OAuth mode
+    const input = { scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2",
+      commentLine: "// Sample", expectedFingerprint: "0".repeat(64), confirmed: true as const };
+    await expect(f.manager.applyAppsScriptComment(input)).rejects.toThrow(/scope insufficient/);
+    for (const badComment of [
+      "function run() {}", "/* comment */", "// two\nlines", "// two\rlines",
+      "// hidden\u2028line", "// " + "x".repeat(200),
+    ]) {
+      await expect(f.manager.previewAppsScriptComment({
+        scriptId: SCRIPT_ID, commentLine: badComment,
+      })).rejects.toThrow(/single JavaScript/);
+    }
+    await expect(f.manager.previewAppsScriptComment({
+      scriptId: SCRIPT_ID, fileName: "../secret", commentLine: input.commentLine,
+    })).rejects.toThrow(/filename/);
+    expect(f.fetcher).not.toHaveBeenCalled();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ files: [
+      ...files,
+      { name: "SecondCode", type: "SERVER_JS", source: "function keep() {}" },
+    ] })));
+    await expect(f.manager.previewAppsScriptComment({
+      scriptId: SCRIPT_ID, commentLine: input.commentLine,
+    })).rejects.toThrow(/Select exactly one/);
+    await f.manager.shutdown();
+  });
+
+  it("never retries an ambiguous Apps Script update or silently reports success", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    const commentLine = "// Bounded single-line edit";
+    const changed = files.map((file) => file.type === "SERVER_JS"
+      ? { ...file, source: commentLine + "\n" + file.source } : file);
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ files })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: changed })))
+      .mockRejectedValueOnce(new Error("network timeout after PUT"));
+    await expect(f.manager.applyAppsScriptComment({
+      scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2", commentLine,
+      expectedFingerprint: contentFingerprint(files), confirmed: true,
+    })).rejects.toThrow(/network timeout after PUT/);
+    expect(f.fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(["GET", "GET", "PUT", "GET"]);
+    await f.manager.shutdown();
+  });
+
   it("enables metadata discovery without changing deploy scope and clears the old OAuth tokens", async () => {
     const f = fixture();
     await f.manager.configureGoogle(CLIENT_ID, "deploy", "desktop-secret-for-test");
