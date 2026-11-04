@@ -169,7 +169,8 @@ function validTextEdit(value: unknown): boolean {
   if (!record(value) || Object.keys(value).some((key) =>
     !["fileName", "operation", "findText", "text"].includes(key))) return false;
   if (!validSourceFilename(value.fileName) || typeof value.text !== "string" ||
-      value.text.length < 1 || Buffer.byteLength(value.text) > 8192 ||
+      (value.operation !== "replace_exact" && value.text.length < 1) ||
+      Buffer.byteLength(value.text) > 8192 ||
       value.text.includes("\0")) return false;
   if (value.operation === "replace_exact") {
     return typeof value.findText === "string" && value.findText.length > 0 &&
