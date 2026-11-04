@@ -33,6 +33,8 @@ describe("Google Workspace first-party MCP gateway", () => {
         { original_name: "google_workspace_status" },
         { original_name: "apps_script_get_content" },
         { original_name: "apps_script_list_projects" },
+        { original_name: "apps_script_comment_preview" },
+        { original_name: "apps_script_comment_apply" },
         { original_name: "apps_script_update_content" },
         { original_name: "apps_script_create_deployment" },
         { original_name: "appsheet_find_rows" },
@@ -45,6 +47,23 @@ describe("Google Workspace first-party MCP gateway", () => {
     const manager = {
       googleStatus: vi.fn(async () => ({
         configured: false, connected: false, mode: null, projectDiscoveryEnabled: false,
+      })),
+      previewAppsScriptComment: vi.fn(async () => ({
+        scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+        fileName: "Shared Helpers.v2",
+        commentLine: "// Safe one-line change",
+        expectedFingerprint: "a".repeat(64),
+        position: "file-start",
+        wouldChange: true,
+        fileCount: 2,
+        manifestPreserved: true,
+      })),
+      applyAppsScriptComment: vi.fn(async () => ({
+        scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+        fileName: "Shared Helpers.v2",
+        previousFingerprint: "a".repeat(64),
+        newFingerprint: "b".repeat(64),
+        changed: true, verified: true,
       })),
       listAppsScriptProjects: vi.fn(async () => ({
         projects: [{
@@ -67,6 +86,8 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(policies.find((p) => p.toolName === "appsheet_find_rows")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "google_workspace_status")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_list_projects")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_comment_preview")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_comment_apply")?.approval).toBe("ask");
 
       const send = async (authorization: string, method: string, params: Record<string, unknown> = {}) => {
         return fetch(server.url(), {
@@ -83,6 +104,8 @@ describe("Google Workspace first-party MCP gateway", () => {
       const catalog = await allowed.json() as { result: { tools: Array<{ name: string }> } };
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_get_content")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_projects")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_comment_preview")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_comment_apply")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "appsheet_key_set")).toBe(false);
 
       const result = await send(`Bearer ${credential}`, "tools/call", {
@@ -104,6 +127,38 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(listing.result.structuredContent.projects[0].name).toBe("Example project");
       expect(listing.result.structuredContent.nextPageToken).toBe("page2");
       expect(manager.listAppsScriptProjects).toHaveBeenCalledWith({ pageSize: 20, pageToken: "page1" });
+
+      const scriptId = "abcdefghijklmnopqrstuvwxy1234567890";
+      const preview = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_comment_preview",
+        arguments: { scriptId, commentLine: "// Safe one-line change" },
+      });
+      const previewPayload = await preview.json() as {
+        result: { structuredContent: { expectedFingerprint: string; fileName: string } };
+      };
+      expect(previewPayload.result.structuredContent.expectedFingerprint).toBe("a".repeat(64));
+      expect(previewPayload.result.structuredContent.fileName).toBe("Shared Helpers.v2");
+      expect(manager.previewAppsScriptComment).toHaveBeenCalledWith({
+        scriptId, commentLine: "// Safe one-line change",
+      });
+
+      const applied = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_comment_apply",
+        arguments: {
+          scriptId, fileName: "Shared Helpers.v2", commentLine: "// Safe one-line change",
+          expectedFingerprint: "a".repeat(64), confirmed: true,
+        },
+      });
+      const appliedPayload = await applied.json() as {
+        result: { structuredContent: { changed: boolean; verified: boolean } };
+      };
+      expect(appliedPayload.result.structuredContent).toMatchObject({
+        changed: true, verified: true,
+      });
+      expect(manager.applyAppsScriptComment).toHaveBeenCalledWith({
+        scriptId, fileName: "Shared Helpers.v2", commentLine: "// Safe one-line change",
+        expectedFingerprint: "a".repeat(64), confirmed: true,
+      });
 
       // A user's disable decision must not be undone by periodic discovery.
       await client.disable("sourcenerve-google-workspace");
