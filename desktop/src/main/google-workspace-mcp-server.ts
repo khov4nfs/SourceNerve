@@ -43,7 +43,7 @@ const SCRIPT_PATCH_EDITS = {
       fileName: { type: "string", minLength: 1, maxLength: 128 },
       operation: { type: "string", enum: ["replace_exact", "prepend", "append"] },
       findText: { type: "string", minLength: 1, maxLength: 16384 },
-      text: { type: "string", minLength: 1, maxLength: 8192 },
+      text: { type: "string", minLength: 0, maxLength: 8192 },
     },
     required: ["fileName", "operation", "text"],
   },
