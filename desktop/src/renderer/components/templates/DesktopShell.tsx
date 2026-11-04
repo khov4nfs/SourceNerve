@@ -1,5 +1,5 @@
 import { useState, type PropsWithChildren } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
 
 import type { ManagedWorkspaceView } from "../../../shared/desktop-api";
 import type { RouteId, SettingsSectionId } from "../../navigation";
@@ -12,6 +12,7 @@ interface DesktopShellProps extends PropsWithChildren {
   selectedWorkspaceId: string | null;
   onWorkspaceSelect(workspaceId: string): void;
   onOpenSettings(section?: SettingsSectionId): void;
+  onAddWorkspace?(): void;
 }
 
 export function DesktopShell({
@@ -20,6 +21,7 @@ export function DesktopShell({
   selectedWorkspaceId,
   onWorkspaceSelect,
   onOpenSettings,
+  onAddWorkspace,
   children,
 }: DesktopShellProps) {
   const conversationSurface = route === "harness";
@@ -42,6 +44,7 @@ export function DesktopShell({
           selectedWorkspaceId={selectedWorkspaceId}
           onWorkspaceSelect={onWorkspaceSelect}
           onOpenSettings={onOpenSettings}
+          onAddWorkspace={onAddWorkspace}
         />
       ) : null}
 
@@ -69,6 +72,17 @@ export function DesktopShell({
             <p className="min-w-0 truncate text-sm font-semibold leading-none text-foreground">
               {selectedWorkspace?.name ?? "Workspace required"}
             </p>
+            {!selectedWorkspace && onAddWorkspace ? (
+              <button
+                type="button"
+                onClick={onAddWorkspace}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                title="Add workspace"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                <span>Add workspace</span>
+              </button>
+            ) : null}
           </div>
         ) : (
           <button

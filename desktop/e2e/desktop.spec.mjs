@@ -10,13 +10,15 @@ const migrationRecoveryHarness = path.join(desktopRoot, "e2e", "migration-recove
 
 async function launchDesktop(harness = workflowHarness) {
   const profileDir = path.join(os.tmpdir(), `sourcenerve-e2e-${process.pid}-${randomUUID()}`);
+  const env = {
+    ...process.env,
+    ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
   const electronApp = await electron.launch({
     args: [harness, `--user-data-dir=${profileDir}`],
     cwd: desktopRoot,
-    env: {
-      ...process.env,
-      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
-    },
+    env,
   });
   const page = await electronApp.firstWindow();
   page.on("dialog", (dialog) => void dialog.accept());

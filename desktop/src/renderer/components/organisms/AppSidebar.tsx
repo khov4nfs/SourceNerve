@@ -1,4 +1,4 @@
-import { FolderGit2, GitPullRequest, Settings2, type LucideIcon } from "lucide-react";
+import { FolderGit2, GitPullRequest, Plus, Settings2, type LucideIcon } from "lucide-react";
 
 import type { ManagedWorkspaceView } from "../../../shared/desktop-api";
 import appIconUrl from "../../../../assets/generated/icon.png";
@@ -17,12 +17,14 @@ export function AppSidebar({
   selectedWorkspaceId,
   onWorkspaceSelect,
   onOpenSettings,
+  onAddWorkspace,
 }: {
   route: RouteId;
   workspaces: ManagedWorkspaceView[];
   selectedWorkspaceId: string | null;
   onWorkspaceSelect(workspaceId: string): void;
   onOpenSettings(section?: SettingsSectionId): void;
+  onAddWorkspace?(): void;
 }) {
   return (
     <aside
@@ -39,40 +41,81 @@ export function AppSidebar({
 
       <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-3" aria-label="SourceNerve sections">
         <section aria-label="Managed workspaces">
-          <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">Workspaces</p>
+          <div className="mb-1.5 flex items-center justify-between px-2">
+            <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">Workspaces</p>
+            {onAddWorkspace ? (
+              <button
+                type="button"
+                onClick={onAddWorkspace}
+                className="grid size-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-[var(--sn-sidebar-hover)] hover:text-foreground"
+                title="Add workspace"
+                aria-label="Add workspace"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
           <div className="space-y-0.5">
             {workspaces.length === 0 ? (
-              <p className="px-2.5 py-2 text-[11px] leading-5 text-muted-foreground">Use <code>/workspace add</code> in Harness.</p>
-            ) : workspaces.map((workspace) => {
-              const ready = workspace.validation.state === "ready" && workspace.access === "read-write" && workspace.localWritable;
-              const selected = workspace.id === selectedWorkspaceId;
-              return (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  onClick={() => onWorkspaceSelect(workspace.id)}
-                  disabled={!ready}
-                  aria-pressed={selected}
-                  title={ready ? workspace.repository ?? workspace.name : workspace.validation.message ?? "Workspace is not ready"}
-                  className={cn(
-                    "relative flex min-h-9 w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-                    selected
-                      ? "bg-[var(--sn-sidebar-active)] font-semibold text-primary shadow-[inset_0_0_0_1px_var(--border)]"
-                      : "font-medium text-muted-foreground hover:bg-[var(--sn-sidebar-hover)] hover:text-foreground",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary transition-opacity",
-                      selected ? "opacity-100" : "opacity-0",
-                    )}
-                    aria-hidden="true"
-                  />
-                  <FolderGit2 className={cn("size-3.5 shrink-0", selected ? "text-primary" : "")} strokeWidth={1.8} aria-hidden="true" />
-                  <span className={cn("min-w-0 flex-1 truncate", selected ? "text-primary" : "")}>{workspace.name}</span>
-                </button>
-              );
-            })}
+              <div className="space-y-2 px-2.5 py-2">
+                <p className="text-[11px] leading-5 text-muted-foreground">
+                  Use <code>/workspace add</code> in Harness.
+                </p>
+                {onAddWorkspace ? (
+                  <button
+                    type="button"
+                    onClick={onAddWorkspace}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-dashed border-border bg-card/60 px-2.5 py-1.5 text-center text-xs font-medium text-foreground transition-colors hover:border-primary/50 hover:bg-muted"
+                  >
+                    <Plus className="size-3.5" aria-hidden="true" />
+                    <span>Add project</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                {workspaces.map((workspace) => {
+                  const ready = workspace.validation.state === "ready" && workspace.access === "read-write" && workspace.localWritable;
+                  const selected = workspace.id === selectedWorkspaceId;
+                  return (
+                    <button
+                      key={workspace.id}
+                      type="button"
+                      onClick={() => onWorkspaceSelect(workspace.id)}
+                      disabled={!ready}
+                      aria-pressed={selected}
+                      title={ready ? workspace.repository ?? workspace.name : workspace.validation.message ?? "Workspace is not ready"}
+                      className={cn(
+                        "relative flex min-h-9 w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                        selected
+                          ? "bg-[var(--sn-sidebar-active)] font-semibold text-primary shadow-[inset_0_0_0_1px_var(--border)]"
+                          : "font-medium text-muted-foreground hover:bg-[var(--sn-sidebar-hover)] hover:text-foreground",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary transition-opacity",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
+                        aria-hidden="true"
+                      />
+                      <FolderGit2 className={cn("size-3.5 shrink-0", selected ? "text-primary" : "")} strokeWidth={1.8} aria-hidden="true" />
+                      <span className={cn("min-w-0 flex-1 truncate", selected ? "text-primary" : "")}>{workspace.name}</span>
+                    </button>
+                  );
+                })}
+                {onAddWorkspace ? (
+                  <button
+                    type="button"
+                    onClick={onAddWorkspace}
+                    className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-[var(--sn-sidebar-hover)] hover:text-foreground"
+                  >
+                    <Plus className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span>Add workspace</span>
+                  </button>
+                ) : null}
+              </>
+            )}
           </div>
         </section>
 
