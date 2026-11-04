@@ -99,6 +99,44 @@ pub fn complete_known_browser_classification(
     }
 }
 
+/// SourceNerve's built-in Google Workspace Desktop proxy has a small,
+/// audited list of operations that only read external data. The generic MCP
+/// classifier intentionally does not trust unknown downstream readOnlyHint
+/// annotations; compound names such as apps_script_list_projects would
+/// otherwise be routed through the conservative write dispatcher.
+///
+/// Only trust the reserved built-in extension identity and exact known public
+/// tool names. A downstream conflicting write/destructive annotation wins.
+pub fn complete_known_google_workspace_classification(
+    extension_id: &str,
+    public_name: &str,
+    hint: ToolClassification,
+) -> ToolClassification {
+    if extension_id != "sourcenerve-google-workspace" {
+        return hint;
+    }
+    if !matches!(
+        public_name,
+        "google-workspace__apps_script_list_projects"
+            | "google-workspace__apps_script_get_project"
+            | "google-workspace__apps_script_get_content"
+            | "google-workspace__appsheet_find_rows"
+            | "google-workspace__appsheet_key_status"
+            | "google-workspace__google_workspace_status"
+    ) || hint.read_only == Some(false)
+        || hint.destructive == Some(true)
+    {
+        return hint;
+    }
+
+    ToolClassification {
+        read_only: Some(true),
+        destructive: Some(false),
+        idempotent: Some(hint.idempotent != Some(false)),
+        open_world: Some(true),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolPolicy {
     pub enabled: bool,
@@ -436,6 +474,80 @@ mod tests {
         assert_eq!(interactive.destructive, Some(true));
         assert_eq!(interactive.idempotent, Some(false));
         assert_eq!(interactive.open_world, Some(true));
+    }
+
+    #[test]
+    fn first_party_google_workspace_reads_use_read_dispatcher() {
+        for public_name in [
+            "google-workspace__apps_script_list_projects",
+            "google-workspace__apps_script_get_project",
+            "google-workspace__apps_script_get_content",
+            "google-workspace__appsheet_find_rows",
+            "google-workspace__appsheet_key_status",
+            "google-workspace__google_workspace_status",
+        ] {
+            let classification = complete_known_google_workspace_classification(
+                "sourcenerve-google-workspace",
+                public_name,
+                ToolClassification::default(),
+            );
+            assert_eq!(classification.read_only, Some(true), "{public_name}");
+            assert_eq!(classification.destructive, Some(false), "{public_name}");
+        }
+    }
+
+    #[test]
+    fn google_workspace_classifier_does_not_trust_spoofed_or_mutating_operations() {
+        let hint = ToolClassification {
+            read_only: None,
+            destructive: None,
+            idempotent: None,
+            open_world: None,
+        };
+        assert_eq!(
+            complete_known_google_workspace_classification(
+                "untrusted-extension",
+                "google-workspace__apps_script_list_projects",
+                hint,
+            ),
+            hint
+        );
+        for name in [
+            "google-workspace__apps_script_update_content",
+            "google-workspace__apps_script_create_version",
+            "google-workspace__apps_script_create_deployment",
+            "google-workspace__apps_script_list_projects_and_delete",
+            "other-namespace__apps_script_list_projects",
+        ] {
+            assert_eq!(
+                complete_known_google_workspace_classification(
+                    "sourcenerve-google-workspace",
+                    name,
+                    hint,
+                ),
+                hint,
+                "{name}"
+            );
+        }
+        for conflicting in [
+            ToolClassification {
+                read_only: Some(false),
+                ..hint
+            },
+            ToolClassification {
+                destructive: Some(true),
+                ..hint
+            },
+        ] {
+            assert_eq!(
+                complete_known_google_workspace_classification(
+                    "sourcenerve-google-workspace",
+                    "google-workspace__apps_script_list_projects",
+                    conflicting,
+                ),
+                conflicting
+            );
+        }
     }
 
     #[test]
