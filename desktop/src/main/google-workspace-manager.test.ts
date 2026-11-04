@@ -173,7 +173,8 @@ describe("Google Workspace Desktop secure adapters", () => {
     const commentLine = "// Already present";
     const existing = files.map((file) => file.type === "SERVER_JS"
       ? { ...file, source: commentLine + "\n" + file.source } : file);
-    f.fetcher.mockResolvedValue(new Response(JSON.stringify({ files: existing })));
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ files: existing })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: existing })));
     const preview = await f.manager.previewAppsScriptComment({ scriptId: SCRIPT_ID, commentLine });
     expect(preview.wouldChange).toBe(false);
     const result = await f.manager.applyAppsScriptComment({
