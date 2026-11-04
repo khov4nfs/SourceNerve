@@ -1,7 +1,14 @@
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 
 import type { DesktopError, DesktopResult } from "../shared/desktop-api";
-import { GOOGLE_WORKSPACE_IPC, type AppsScriptUpdateInput, type AppSheetKeyInput, type GoogleScriptAccessMode } from "../shared/google-workspace-api";
+import {
+  GOOGLE_WORKSPACE_IPC,
+  type AppsScriptCommentApplyInput,
+  type AppsScriptCommentPatchInput,
+  type AppsScriptUpdateInput,
+  type AppSheetKeyInput,
+  type GoogleScriptAccessMode,
+} from "../shared/google-workspace-api";
 import type { GoogleWorkspaceManager } from "./google-workspace-manager";
 
 /**
@@ -35,6 +42,8 @@ export function installGoogleWorkspaceIpcHandlers(context: GoogleWorkspaceIpcCon
           case GOOGLE_WORKSPACE_IPC.scriptProject: return ok(await manager.getAppsScriptProject(args[0] as string));
           case GOOGLE_WORKSPACE_IPC.scriptContent: return ok(await manager.getAppsScriptContent(args[0] as string));
           case GOOGLE_WORKSPACE_IPC.updateScript: return ok(await manager.updateAppsScriptContent(args[0] as AppsScriptUpdateInput));
+          case GOOGLE_WORKSPACE_IPC.previewScriptComment: return ok(await manager.previewAppsScriptComment(args[0] as AppsScriptCommentPatchInput));
+          case GOOGLE_WORKSPACE_IPC.applyScriptComment: return ok(await manager.applyAppsScriptComment(args[0] as AppsScriptCommentApplyInput));
           case GOOGLE_WORKSPACE_IPC.createVersion: return ok(await manager.createAppsScriptVersion({
             scriptId: args[0] as string, description: args[1] as string, confirmed: true,
           }));
@@ -84,6 +93,20 @@ export function validateGoogleWorkspaceIpc(channel: string, args: readonly unkno
     case GOOGLE_WORKSPACE_IPC.scriptProject:
     case GOOGLE_WORKSPACE_IPC.scriptContent:
       return args.length === 1 && scriptId(args[0]);
+    case GOOGLE_WORKSPACE_IPC.previewScriptComment:
+    case GOOGLE_WORKSPACE_IPC.applyScriptComment: {
+      if (args.length !== 1 || !record(args[0])) return false;
+      const input = args[0];
+      const applying = channel === GOOGLE_WORKSPACE_IPC.applyScriptComment;
+      return Object.keys(input).every((key) => (
+        ["scriptId", "fileName", "commentLine", ...(applying ? ["expectedFingerprint", "confirmed"] : [])]
+      ).includes(key)) &&
+        scriptId(input.scriptId) &&
+        (input.fileName === undefined ? !applying : validSourceFilename(input.fileName)) &&
+        validCommentLine(input.commentLine) &&
+        (!applying || (input.confirmed === true && typeof input.expectedFingerprint === "string" &&
+          /^[0-9a-f]{64}$/.test(input.expectedFingerprint)));
+    }
     case GOOGLE_WORKSPACE_IPC.updateScript: {
       const value = args[0];
       return args.length === 1 && record(value) && Object.keys(value).every((k) =>
@@ -122,6 +145,15 @@ function record(value: unknown): value is Record<string, unknown> {
 function bounded(value: unknown, min: number, max: number): value is string {
   return typeof value === "string" && value.length >= min && value.length <= max &&
     !/[\r\n\0]/.test(value);
+}
+function validSourceFilename(value: unknown): boolean {
+  return bounded(value, 1, 128) && value !== "." && value !== ".." &&
+    !/[\\/]/.test(value);
+}
+function validCommentLine(value: unknown): boolean {
+  return typeof value === "string" && value.length >= 4 && value.length <= 200 &&
+    value.startsWith("// ") && !/[\r\n\0\u2028\u2029]/.test(value) &&
+    Buffer.byteLength(value, "utf8") <= 512;
 }
 function scriptId(value: unknown): boolean {
   return typeof value === "string" && /^[A-Za-z0-9_-]{12,160}$/.test(value);
