@@ -46,22 +46,7 @@ export function installGoogleWorkspaceIpcHandlers(context: GoogleWorkspaceIpcCon
           case GOOGLE_WORKSPACE_IPC.updateScript: return ok(await manager.updateAppsScriptContent(args[0] as AppsScriptUpdateInput));
           case GOOGLE_WORKSPACE_IPC.previewScriptPatch: return ok(await manager.previewAppsScriptPatch(args[0] as AppsScriptPatchPreviewInput));
           case GOOGLE_WORKSPACE_IPC.applyScriptPatch: return ok(await manager.applyAppsScriptPatch(args[0] as AppsScriptPatchApplyInput));
-          case GOOGLE_WORKSPACE_IPC.previewScriptPatch:
-    case GOOGLE_WORKSPACE_IPC.applyScriptPatch: {
-      if (args.length !== 1 || !record(args[0])) return false;
-      const input = args[0];
-      const applying = channel === GOOGLE_WORKSPACE_IPC.applyScriptPatch;
-      const keys = ["scriptId", "edits", ...(applying ?
-        ["expectedFingerprint", "expectedPatchedFingerprint", "planFingerprint", "confirmed"] : [])];
-      const isHash = (v: unknown) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
-      return Object.keys(input).every((key) => keys.includes(key)) &&
-        scriptId(input.scriptId) &&
-        Array.isArray(input.edits) && input.edits.length >= 1 && input.edits.length <= 16 &&
-        input.edits.every(validTextEdit) &&
-        (!applying || (input.confirmed === true && isHash(input.expectedFingerprint) &&
-          isHash(input.expectedPatchedFingerprint) && isHash(input.planFingerprint)));
-    }
-    case GOOGLE_WORKSPACE_IPC.previewScriptComment: return ok(await manager.previewAppsScriptComment(args[0] as AppsScriptCommentPatchInput));
+          case GOOGLE_WORKSPACE_IPC.previewScriptComment: return ok(await manager.previewAppsScriptComment(args[0] as AppsScriptCommentPatchInput));
           case GOOGLE_WORKSPACE_IPC.applyScriptComment: return ok(await manager.applyAppsScriptComment(args[0] as AppsScriptCommentApplyInput));
           case GOOGLE_WORKSPACE_IPC.createVersion: return ok(await manager.createAppsScriptVersion({
             scriptId: args[0] as string, description: args[1] as string, confirmed: true,
@@ -112,6 +97,21 @@ export function validateGoogleWorkspaceIpc(channel: string, args: readonly unkno
     case GOOGLE_WORKSPACE_IPC.scriptProject:
     case GOOGLE_WORKSPACE_IPC.scriptContent:
       return args.length === 1 && scriptId(args[0]);
+    case GOOGLE_WORKSPACE_IPC.previewScriptPatch:
+    case GOOGLE_WORKSPACE_IPC.applyScriptPatch: {
+      if (args.length !== 1 || !record(args[0])) return false;
+      const input = args[0];
+      const applying = channel === GOOGLE_WORKSPACE_IPC.applyScriptPatch;
+      const keys = ["scriptId", "edits", ...(applying ?
+        ["expectedFingerprint", "expectedPatchedFingerprint", "planFingerprint", "confirmed"] : [])];
+      const isHash = (v: unknown) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
+      return Object.keys(input).every((key) => keys.includes(key)) &&
+        scriptId(input.scriptId) &&
+        Array.isArray(input.edits) && input.edits.length >= 1 && input.edits.length <= 16 &&
+        input.edits.every(validTextEdit) &&
+        (!applying || (input.confirmed === true && isHash(input.expectedFingerprint) &&
+          isHash(input.expectedPatchedFingerprint) && isHash(input.planFingerprint)));
+    }
     case GOOGLE_WORKSPACE_IPC.previewScriptComment:
     case GOOGLE_WORKSPACE_IPC.applyScriptComment: {
       if (args.length !== 1 || !record(args[0])) return false;
