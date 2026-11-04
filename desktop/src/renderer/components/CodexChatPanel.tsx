@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleX, Command, Copy, FolderOpen, LoaderCircle, Maximize2, Minimize2, ShieldCheck } from "lucide-react";
+import { ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleX, Command, Copy, FolderOpen, LoaderCircle, Maximize2, Minimize2, Plus, ShieldCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -170,6 +170,7 @@ export function HarnessConversationPanel({
   onChanged,
   onWorkspaceSelected,
   onWorkspacesChanged,
+  onAddWorkspace,
 }: {
   workspaces: ManagedWorkspaceView[];
   runs: DesktopHarnessRunView[];
@@ -186,7 +187,9 @@ export function HarnessConversationPanel({
   onChanged(): Promise<void>;
   onWorkspaceSelected(workspaceId: string): void;
   onWorkspacesChanged(): Promise<void>;
+  onAddWorkspace?(): Promise<void> | void;
 }) {
+  const handleAddWorkspace = onAddWorkspace ?? (() => void executeWorkspaceCommand("/workspace add"));
   const readyWorkspaces = useMemo(
     () => workspaces.filter((workspace) => workspace.validation.state === "ready" && workspace.access === "read-write" && workspace.localWritable),
     [workspaces],
@@ -2063,7 +2066,31 @@ export function HarnessConversationPanel({
               <div className="max-w-xl">
                 <img src={appIconUrl} alt="" className="mx-auto mb-4 size-10 rounded-[10px]" aria-hidden="true" />
                 <p className="text-lg font-semibold tracking-[-0.02em] text-foreground">What would you like Harness to work on?</p>
-                {workspaces.length === 0 ? <p className="mt-2 text-xs text-muted-foreground">Use <code>/workspace add</code> to add your first workspace.</p> : null}
+                {workspaces.length === 0 ? (
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    <p className="text-xs text-muted-foreground">No project workspace connected yet. Use <code>/workspace add</code> or click below to add one.</p>
+                    <ActionButton
+                      onClick={() => void handleAddWorkspace()}
+                      disabled={busy !== null}
+                      className="mt-1"
+                    >
+                      <Plus className="size-4" aria-hidden="true" />
+                      Add project workspace
+                    </ActionButton>
+                  </div>
+                ) : !selectedReadyWorkspace ? (
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    <p className="text-xs text-muted-foreground">Select a ready workspace from the sidebar or add a new project.</p>
+                    <ActionButton
+                      onClick={() => void handleAddWorkspace()}
+                      disabled={busy !== null}
+                      className="mt-1"
+                    >
+                      <Plus className="size-4" aria-hidden="true" />
+                      Add project workspace
+                    </ActionButton>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : feedItems.map((item, index) => item.kind === "message" ? (
@@ -2138,6 +2165,7 @@ export function HarnessConversationPanel({
                   selectedWorkspaceId={selectedWorkspaceId}
                   busy={busy === "workspace"}
                   onRefresh={() => void executeWorkspaceCommand("/workspace list")}
+                  onAdd={() => void handleAddWorkspace()}
                   onClose={() => setWorkspaceListOpen(false)}
                 />
               ) : null}
@@ -2397,6 +2425,20 @@ export function HarnessConversationPanel({
                 : "Native Codex agent"} · use /agents, /model, /goal, /loop
             </span>
           </div>
+
+          {workspaces.length === 0 ? (
+            <div className="mb-2 flex items-center justify-between gap-3 rounded-[10px] border border-border bg-card/90 px-3 py-2 text-xs text-muted-foreground shadow-sm">
+              <span>No project workspace is connected. Add a local Git repository to start.</span>
+              <ActionButton
+                size="sm"
+                onClick={() => void handleAddWorkspace()}
+                disabled={busy !== null}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                Add project
+              </ActionButton>
+            </div>
+          ) : null}
 
           <div className="relative flex items-end gap-2 rounded-[16px] border border-border bg-card px-3 py-2 shadow-[0_3px_14px_var(--sn-shadow)] transition-[border-color,box-shadow] focus-within:border-foreground/35 focus-within:shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_10%,transparent),0_3px_14px_var(--sn-shadow)]">
             <div className={`flex min-w-0 flex-1 ${promptIsBangCommand ? "items-center gap-2" : "items-end"}`}>
@@ -3697,12 +3739,14 @@ function WorkspaceListInlinePanel({
   selectedWorkspaceId,
   busy,
   onRefresh,
+  onAdd,
   onClose,
 }: {
   workspaces: ManagedWorkspaceView[];
   selectedWorkspaceId: string | null;
   busy: boolean;
   onRefresh(): void;
+  onAdd?(): void;
   onClose(): void;
 }) {
   return (
@@ -3726,8 +3770,14 @@ function WorkspaceListInlinePanel({
           </div>
         ))}
       </div>
-      <div className="mt-3">
+      <div className="mt-3 flex items-center gap-2">
         <ActionButton variant="secondary" size="sm" onClick={onRefresh} disabled={busy}>{busy ? "Refreshing…" : "Refresh"}</ActionButton>
+        {onAdd ? (
+          <ActionButton size="sm" onClick={onAdd} disabled={busy}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            Add workspace
+          </ActionButton>
+        ) : null}
       </div>
     </section>
   );

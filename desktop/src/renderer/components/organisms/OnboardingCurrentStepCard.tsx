@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ArrowRight, CheckCircle2, FolderOpen, RefreshCw } from "lucide-react";
+import { ArrowRight, CheckCircle2, FolderOpen, Plus, RefreshCw } from "lucide-react";
 
 import type { DesktopHarnessCodexSetupView } from "../../../shared/harness-api";
 import type { OnboardingSignals, OnboardingStep } from "../../onboarding";
@@ -27,6 +27,7 @@ export function OnboardingCurrentStepCard({
   onInstallCodex,
   onLoginCodex,
   onRetryCurrent,
+  onAddWorkspace,
 }: {
   step: OnboardingStep;
   signals: OnboardingSignals;
@@ -39,6 +40,7 @@ export function OnboardingCurrentStepCard({
   onInstallCodex(): Promise<void>;
   onLoginCodex(): Promise<void>;
   onRetryCurrent(): Promise<void>;
+  onAddWorkspace?(): void;
 }) {
   const [busy, setBusy] = useState<"retry" | "install" | "login" | null>(null);
 
@@ -68,6 +70,7 @@ export function OnboardingCurrentStepCard({
           onInstallCodex={() => void run("install", onInstallCodex)}
           onLoginCodex={() => void run("login", onLoginCodex)}
           onRetryCurrent={() => void run("retry", onRetryCurrent)}
+          onAddWorkspace={onAddWorkspace}
         />
       </div>
     </SurfaceCard>
@@ -86,6 +89,7 @@ function CurrentStep({
   onInstallCodex,
   onLoginCodex,
   onRetryCurrent,
+  onAddWorkspace,
 }: {
   step: OnboardingStep;
   signals: OnboardingSignals;
@@ -98,6 +102,7 @@ function CurrentStep({
   onInstallCodex(): void;
   onLoginCodex(): void;
   onRetryCurrent(): void;
+  onAddWorkspace?(): void;
 }) {
   if (step === "welcome") {
     return (
@@ -147,7 +152,12 @@ function CurrentStep({
         </div>
         <p className="text-xs leading-5 text-muted-foreground">Open Harness and run <code>/workspace add</code> to choose a local Git checkout. Use <code>/workspace help</code> for edit, remove, and transport-check commands. Removing a workspace never deletes repository files.</p>
         <ActionRow>
-          <ActionButton onClick={onOpenWorkspaces}><FolderOpen className="size-4" aria-hidden="true" />Open Harness</ActionButton>
+          {onAddWorkspace ? (
+            <ActionButton onClick={onAddWorkspace}>
+              <Plus className="size-4" aria-hidden="true" />Add workspace
+            </ActionButton>
+          ) : null}
+          <ActionButton variant="secondary" onClick={onOpenWorkspaces}><FolderOpen className="size-4" aria-hidden="true" />Open Harness</ActionButton>
           <RetryButton busy={busy === "retry"} busyLabel="Checking workspace…" onClick={onRetryCurrent}>Check workspace</RetryButton>
         </ActionRow>
       </div>
