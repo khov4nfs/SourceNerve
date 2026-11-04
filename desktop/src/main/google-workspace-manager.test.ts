@@ -461,6 +461,28 @@ describe("Google Workspace Desktop secure adapters", () => {
     expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.configure, [
       "123.evil.test", "read",
     ])).toBe(false);
+    const patchEdit = {
+      fileName: "Shared Helpers.v2", operation: "replace_exact",
+      findText: "return 1;", text: "return 2;",
+    };
+    const patch = { scriptId: SCRIPT_ID, edits: [patchEdit] };
+    expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.previewScriptPatch, [patch])).toBe(true);
+    expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.applyScriptPatch, [{
+      ...patch, expectedFingerprint: "a".repeat(64),
+      expectedPatchedFingerprint: "b".repeat(64), planFingerprint: "c".repeat(64),
+      confirmed: true,
+    }])).toBe(true);
+    expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.applyScriptPatch, [{
+      ...patch, expectedFingerprint: "a".repeat(64),
+      expectedPatchedFingerprint: "b".repeat(64), planFingerprint: "c".repeat(64),
+      confirmed: false,
+    }])).toBe(false);
+    expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.previewScriptPatch, [{
+      ...patch, edits: [{ ...patchEdit, fileName: "../other" }],
+    }])).toBe(false);
+    expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.previewScriptPatch, [{
+      ...patch, edits: [{ ...patchEdit, operation: "shell" }],
+    }])).toBe(false);
     const commentBase = { scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2",
       commentLine: "// Small audit comment" };
     expect(validateGoogleWorkspaceIpc(GOOGLE_WORKSPACE_IPC.previewScriptComment,
