@@ -236,6 +236,82 @@ describe("Google Workspace Desktop secure adapters", () => {
     await f.manager.shutdown();
   });
 
+  it("previews and applies multiple code edits with one write and no source disclosure", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    const current = [...files, {
+      name: "View", type: "HTML" as const, source: "<p>old</p>",
+    }];
+    const edits = [
+      { fileName: "Shared Helpers.v2", operation: "replace_exact" as const,
+        findText: "return 1;", text: "return 2;" },
+      { fileName: "View", operation: "replace_exact" as const,
+        findText: "<p>old</p>", text: "<p>new</p>" },
+    ];
+    const changed = [
+      current[0],
+      { ...current[1], source: "function hello() { return 2; }" },
+      { ...current[2], source: "<p>new</p>" },
+    ];
+    const response = (items: typeof current) => new Response(JSON.stringify({ files: items }));
+    f.fetcher.mockResolvedValueOnce(response(current)).mockResolvedValueOnce(response(current))
+      .mockResolvedValueOnce(response(current)).mockResolvedValueOnce(response(changed))
+      .mockResolvedValueOnce(response(changed));
+    const preview = await f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID, edits });
+    expect(preview.changedFiles).toEqual(["Shared Helpers.v2", "View"]);
+    expect(preview.editCount).toBe(2);
+    expect(preview.expectedPatchedFingerprint).toBe(contentFingerprint(changed));
+    expect(preview.planFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(preview)).not.toContain("return 1;");
+    expect(JSON.stringify(preview)).not.toContain("<p>old</p>");
+    const applied = await f.manager.applyAppsScriptPatch({
+      scriptId: SCRIPT_ID, edits, expectedFingerprint: preview.expectedFingerprint,
+      expectedPatchedFingerprint: preview.expectedPatchedFingerprint,
+      planFingerprint: preview.planFingerprint, confirmed: true,
+    });
+    expect(applied.changed).toBe(true);
+    expect(applied.verified).toBe(true);
+    expect(applied.changedFiles).toEqual(["Shared Helpers.v2", "View"]);
+    expect(f.fetcher.mock.calls.map(([, init]) => init?.method))
+      .toEqual(["GET", "GET", "GET", "PUT", "GET"]);
+    const put = JSON.parse(f.fetcher.mock.calls[3][1]?.body as string) as { files: typeof current };
+    expect(put.files).toEqual(changed);
+    expect(put.files[0]).toEqual(files[0]);
+    expect(JSON.stringify(applied)).not.toContain("return 2;");
+    await f.manager.shutdown();
+  });
+
+  it("rejects modified, ambiguous and invalid plans without Google PUT", async () => {
+    const f = fixture();
+    await f.manager.configureGoogle(CLIENT_ID, "edit");
+    f.secrets.set("mcp-extension:google-workspace:credential", "test-edit-token");
+    const edits = [{ fileName: "Shared Helpers.v2", operation: "replace_exact" as const,
+      findText: "return 1;", text: "return 2;" }];
+    f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ files })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files })));
+    const preview = await f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID, edits });
+    await expect(f.manager.applyAppsScriptPatch({
+      scriptId: SCRIPT_ID, edits: [{ ...edits[0], text: "return 3;" }],
+      expectedFingerprint: preview.expectedFingerprint,
+      expectedPatchedFingerprint: preview.expectedPatchedFingerprint,
+      planFingerprint: preview.planFingerprint, confirmed: true,
+    })).rejects.toThrow(/differs from reviewed edit plan/);
+    await expect(f.manager.applyAppsScriptPatch({
+      scriptId: SCRIPT_ID, edits, expectedFingerprint: "0".repeat(64),
+      expectedPatchedFingerprint: preview.expectedPatchedFingerprint,
+      planFingerprint: preview.planFingerprint, confirmed: true,
+    })).rejects.toThrow(/differs from reviewed edit plan/);
+    await expect(f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID,
+      edits: [{ ...edits[0], text: "" }],
+    })).rejects.toThrow(/Invalid Apps Script text edit/);
+    await expect(f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID,
+      edits: [{ ...edits[0], fileName: "../private" }],
+    })).rejects.toThrow(/Invalid Apps Script text edit/);
+    expect(f.fetcher).toHaveBeenCalledTimes(1);
+    await f.manager.shutdown();
+  });
+
   it("enables metadata discovery without changing deploy scope and clears the old OAuth tokens", async () => {
     const f = fixture();
     await f.manager.configureGoogle(CLIENT_ID, "deploy", "desktop-secret-for-test");
