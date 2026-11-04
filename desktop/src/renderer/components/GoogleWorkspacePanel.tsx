@@ -273,7 +273,8 @@ export function GoogleWorkspacePanel() {
             </label>
             <div className="flex flex-wrap gap-2">
               <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) ||
-                patchEdits.length >= 16 || !patchFileName.trim() || !patchInsertText ||
+                patchEdits.length >= 16 || !patchFileName.trim() ||
+                (patchOperation !== "replace_exact" && !patchInsertText) ||
                 (patchOperation === "replace_exact" && !patchFindText)}
                 onClick={() => {
                   setPatchEdits((previous) => [...previous, {
