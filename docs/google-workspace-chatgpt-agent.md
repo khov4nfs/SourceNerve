@@ -23,6 +23,8 @@ OAuth sẽ yêu cầu thêm scope `drive.metadata.readonly` (restricted scope, c
 
 Sau khi consent, ChatGPT dùng `google-workspace__apps_script_list_projects` (MCP read) với `pageSize` 1..100 và `pageToken` tùy chọn. Kết quả có `projects: [{name, scriptId, modifiedTime, editorUrl}]`, `nextPageToken`, `incompleteSearch`. Công cụ này chỉ liệt kê **standalone scripts** trong Google Drive, không liệt kê script gắn Sheets/Docs/Forms/Slides. Xem `docs/google-workspace-script-discovery.md` để biết quy tắc quyền và phân trang.
 
+**Bound scripts:** `google-workspace__apps_script_list_containers` chỉ tìm Sheet/Doc ứng viên theo tên (Drive metadata-only). Chọn container, mở **Extensions → Apps Script → Project Settings** để sao chép Script ID rồi dùng `google-workspace__apps_script_check_bound` so khớp `parentId` qua Apps Script API. Nếu Google không trả `parentId`, hiển thị `unconfirmed` và không đoán Script ID. Hai công cụ này là read-only; `apps_script_patch_preview` / `apps_script_comment_preview` và Chrome DevTools `take_snapshot` / `take_screenshot` cũng được định tuyến read khi phân loại đúng, nhưng không bỏ qua chính sách Ask đã cấu hình.
+
 ## Luồng đề xuất sau PR #244: first-party OAuth + SourceNerve MCP
 
 Bản Desktop có Google Workspace panel (Plugins + MCP → Google Workspace):

@@ -14,6 +14,8 @@ const MAX_REQUEST_BYTES = 2 * 1024 * 1024 + 16 * 1024;
 type ToolName =
   | "google_workspace_status"
   | "apps_script_list_projects"
+  | "apps_script_list_containers"
+  | "apps_script_check_bound"
   | "apps_script_get_project"
   | "apps_script_get_content"
   | "apps_script_update_content"
@@ -54,6 +56,15 @@ const TOOL_DEFINITIONS: Definition[] = [
     pageSize: { type: "integer", minimum: 1, maximum: 100 },
     pageToken: { type: "string", minLength: 1, maxLength: 4096 },
   }, [], false),
+  definition("apps_script_list_containers", "Find candidate Google Sheets/Docs containers using read-only Drive metadata. This does NOT enumerate container-bound script IDs; obtain the Script ID from the editor to verify linkage.", {
+    pageSize: { type: "integer", minimum: 1, maximum: 100 },
+    pageToken: { type: "string", minLength: 1, maxLength: 4096 },
+    query: { type: "string", minLength: 1, maxLength: 128 },
+  }, [], false),
+  definition("apps_script_check_bound", "Check whether one known Script ID is bound to a selected Sheet/Doc ID by reading Apps Script projects.get; parentId can be absent and returns unconfirmed.", {
+    scriptId: SCRIPT_ID,
+    containerId: SCRIPT_ID,
+  }, ["scriptId", "containerId"], false),
   definition("apps_script_get_project", "Read metadata for one explicitly selected Google Apps Script project", { scriptId: SCRIPT_ID }, ["scriptId"], false),
   definition("apps_script_get_content", "Read Apps Script source files and manifest for one explicit script ID; project source may contain sensitive data", { scriptId: SCRIPT_ID }, ["scriptId"], false, "ask"),
   definition("apps_script_patch_preview", "Preview exact bounded edits to existing Apps Script files; returns only filenames and fingerprints, not source", {
@@ -268,6 +279,15 @@ export class GoogleWorkspaceMcpServer {
         ...(args.pageSize === undefined ? {} : { pageSize: requirePageSize(args.pageSize) }),
         ...(args.pageToken === undefined ? {} : { pageToken: requiredString(args.pageToken, "pageToken", 4096) }),
       });
+      case "apps_script_list_containers": return this.manager.listAppsScriptContainers({
+        ...(args.pageSize === undefined ? {} : { pageSize: requirePageSize(args.pageSize) }),
+        ...(args.pageToken === undefined ? {} : { pageToken: requiredString(args.pageToken, "pageToken", 4096) }),
+        ...(args.query === undefined ? {} : { query: requiredString(args.query, "query", 128) }),
+      });
+      case "apps_script_check_bound": return this.manager.checkBoundAppsScript(
+        requiredString(args.scriptId, "scriptId", 160),
+        requiredString(args.containerId, "containerId", 160),
+      );
       case "apps_script_get_project": return this.manager.getAppsScriptProject(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_get_content": return this.manager.getAppsScriptContent(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_patch_preview": return this.manager.previewAppsScriptPatch({

@@ -46,6 +46,32 @@ Kết quả ví dụ **minh họa, không phải dữ liệu thật**:
 }
 ```
 
+## Tìm script gắn với Sheets/Docs (container-bound)
+
+Google không có API công khai liệt kê Script ID *theo* Sheet/Doc. Bound scripts không hiện như file Apps Script riêng lẻ trong Drive. Vì vậy SourceNerve **không khẳng định tự tìm ra Script ID** từ tên hoặc ID của spreadsheet/document.
+
+Hai công cụ đọc bổ sung, đều dùng token OAuth first-party đã được cấp:
+
+1. `google-workspace__apps_script_list_containers`: lọc các **Sheets/Docs ứng viên** theo tên (tuỳ chọn `query`, tối đa 128 ký tự), `pageSize` 1..100 và `pageToken`. Chỉ dùng Drive `files.list` với MIME của Google Sheets và Google Docs, `fields=id,name,mimeType,modifiedTime`; kết quả có `containers`, `nextPageToken`, `incompleteSearch` và `scriptsEnumerated:false`. Mục `containerId/name/kind/modifiedTime/editorUrl` không có trường `scriptId`, không có bằng chứng tài liệu chứa script.
+2. `google-workspace__apps_script_check_bound`: người dùng cung cấp **Script ID thực** và chọn `containerId` ứng viên. SourceNerve gọi Apps Script `projects.get(scriptId)` bằng scope đọc hiện có, trả `match:` `verified` nếu `parentId` trùng, `mismatch` nếu Google trả một `parentId` hợp lệ khác, hoặc `unconfirmed` khi Google không cung cấp `parentId`. Không đoán mối liên kết dựa trên tên người sở hữu, tiêu đề hoặc việc cả hai cùng tồn tại trên Drive. Kết quả loại bỏ các trường creator/email/permissions của response.
+3. Để lấy Script ID cho tài liệu nguồn: mở Sheet/Doc → **Extensions → Apps Script → Project Settings** → sao chép Script ID, sau đó dùng nút đối chiếu trong SourceNerve Desktop hoặc gọi MCP. Cũng có thể dùng một Script ID đã biết từ nguồn đã được người dùng cung cấp. Không dùng Apps Script API `projects.create` chỉ để thử đoán (vì sẽ tạo dữ liệu thật).
+
+Ví dụ gọi MCP read (metadata-only):
+
+```json
+{"public_tool":"google-workspace__apps_script_list_containers","arguments":{"pageSize":30,"query":"PMT"}}
+```
+
+```json
+{"public_tool":"google-workspace__apps_script_check_bound","arguments":{"scriptId":"abcdefghijklmnopqrstuvwxyz0123456789","containerId":"1sheetDocumentIdLongEnough"}}
+```
+
+Browser use có thể hỗ trợ người dùng mở trang Editor để **xem và tự lấy** Script ID khi đã đăng nhập; đây không phải luồng OAuth thay thế và không được phép tự động thao tác bàn phím/chuột foreground khi chưa có đồng ý của người dùng. Dữ liệu script không được gửi sang browser hoặc Google Drive connector để dò ngược.
+
+### Phân loại read / preview
+
+SourceNerve chỉ sửa phân loại cho các tên công cụ quan sát đã được kiểm chứng, ví dụ Chrome DevTools `take_snapshot`, `take_screenshot` **không có `filePath`**; và Google Workspace first-party `apps_script_patch_preview`, `apps_script_comment_preview`, cùng hai công cụ bound-script trên. Chrome DevTools `take_heapsnapshot` luôn đi qua write dispatcher vì bắt buộc ghi file; `take_snapshot`/`take_screenshot` với `filePath` bị chặn khi gọi qua SourceNerve. Các công cụ có thể ghi (`apply`, `update`, `create`, `navigate`, `evaluate_script`) vẫn đi qua write dispatcher và giữ nguyên per-tool approval. Dù được phân loại read-only, một công cụ đã cấu hình `Ask` ở Desktop vẫn cần approval; classifier không tự cấp quyền.
+
 ### Ranh giới bảo mật
 
 - Gọi **duy nhất** `GET https://www.googleapis.com/drive/v3/files` với `q=mimeType = 'application/vnd.google-apps.script' and trashed = false`, `corpora=user`, `spaces=drive`, `fields=nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)`, `orderBy=modifiedTime desc`. Không đọc file content, permissions, owner emails hay download link.

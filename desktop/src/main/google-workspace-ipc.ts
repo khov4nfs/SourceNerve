@@ -41,6 +41,12 @@ export function installGoogleWorkspaceIpcHandlers(context: GoogleWorkspaceIpcCon
           case GOOGLE_WORKSPACE_IPC.listProjects: return ok(await manager.listAppsScriptProjects(args[0] as {
             pageSize?: number; pageToken?: string;
           }));
+          case GOOGLE_WORKSPACE_IPC.listContainers: return ok(await manager.listAppsScriptContainers(args[0] as {
+            pageSize?: number; pageToken?: string; query?: string;
+          }));
+          case GOOGLE_WORKSPACE_IPC.checkBoundScript: return ok(await manager.checkBoundAppsScript(
+            args[0] as string, args[1] as string,
+          ));
           case GOOGLE_WORKSPACE_IPC.scriptProject: return ok(await manager.getAppsScriptProject(args[0] as string));
           case GOOGLE_WORKSPACE_IPC.scriptContent: return ok(await manager.getAppsScriptContent(args[0] as string));
           case GOOGLE_WORKSPACE_IPC.updateScript: return ok(await manager.updateAppsScriptContent(args[0] as AppsScriptUpdateInput));
@@ -90,6 +96,18 @@ export function validateGoogleWorkspaceIpc(channel: string, args: readonly unkno
           options.pageToken.length > 0 && options.pageToken.length <= 4096 &&
           !/[\r\n\0]/.test(options.pageToken)));
     }
+    case GOOGLE_WORKSPACE_IPC.listContainers: {
+      if (args.length !== 1 || !record(args[0])) return false;
+      const options = args[0];
+      return Object.keys(options).every((key) => ["pageSize", "pageToken", "query"].includes(key)) &&
+        (options.pageSize === undefined || (Number.isSafeInteger(options.pageSize) &&
+          (options.pageSize as number) >= 1 && (options.pageSize as number) <= 100)) &&
+        (options.pageToken === undefined || bounded(options.pageToken, 1, 4096)) &&
+        (options.query === undefined || (bounded(options.query, 1, 128) &&
+          (options.query as string).trim().length > 0));
+    }
+    case GOOGLE_WORKSPACE_IPC.checkBoundScript:
+      return args.length === 2 && scriptId(args[0]) && scriptId(args[1]);
     case GOOGLE_WORKSPACE_IPC.configure:
       return (args.length === 2 || args.length === 3) && googleClientId(args[0]) &&
         ["read", "edit", "deploy"].includes(args[1] as string) &&

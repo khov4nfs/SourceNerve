@@ -28,6 +28,29 @@ export interface AppsScriptProjectList {
   nextPageToken: string | null;
   incompleteSearch: boolean;
 }
+export interface AppsScriptContainerListInput extends AppsScriptProjectListInput {
+  query?: string;
+}
+export interface AppsScriptContainerSummary {
+  containerId: string;
+  name: string;
+  kind: "sheet" | "doc";
+  modifiedTime: string | null;
+  editorUrl: string;
+}
+export interface AppsScriptContainerList {
+  containers: AppsScriptContainerSummary[];
+  nextPageToken: string | null;
+  incompleteSearch: boolean;
+  scriptsEnumerated: false;
+}
+export interface AppsScriptBoundCheck {
+  scriptId: string;
+  containerId: string;
+  scriptTitle: string | null;
+  editorUrl: string;
+  match: "verified" | "mismatch" | "unconfirmed";
+}
 export interface AppsScriptFile {
   name: string;
   type: "SERVER_JS" | "HTML" | "JSON";
@@ -120,6 +143,8 @@ export interface GoogleWorkspaceApi {
   disconnect(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   enableProjectDiscovery(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   listProjects(input?: AppsScriptProjectListInput): Promise<DesktopResult<AppsScriptProjectList>>;
+  listContainers(input?: AppsScriptContainerListInput): Promise<DesktopResult<AppsScriptContainerList>>;
+  checkBoundScript(scriptId: string, containerId: string): Promise<DesktopResult<AppsScriptBoundCheck>>;
   scriptProject(scriptId: string): Promise<DesktopResult<Record<string, unknown>>>;
   scriptContent(scriptId: string): Promise<DesktopResult<AppsScriptContent>>;
   updateScript(input: AppsScriptUpdateInput): Promise<DesktopResult<AppsScriptContent>>;
@@ -141,6 +166,8 @@ export const GOOGLE_WORKSPACE_IPC = {
   disconnect: "desktop:google-workspace-disconnect",
   enableProjectDiscovery: "desktop:google-workspace-enable-discovery",
   listProjects: "desktop:google-workspace-list-projects",
+  listContainers: "desktop:google-workspace-list-containers",
+  checkBoundScript: "desktop:google-workspace-check-bound-script",
   scriptProject: "desktop:google-workspace-script-project",
   scriptContent: "desktop:google-workspace-script-content",
   updateScript: "desktop:google-workspace-script-update",

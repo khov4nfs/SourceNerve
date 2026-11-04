@@ -317,6 +317,9 @@ const googleWorkspaceApi: GoogleWorkspaceApi = {
   disconnect: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.disconnect),
   enableProjectDiscovery: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.enableProjectDiscovery),
   listProjects: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.listProjects, input ?? {}),
+  listContainers: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.listContainers, input ?? {}),
+  checkBoundScript: (scriptId, containerId) =>
+    ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.checkBoundScript, scriptId, containerId),
   scriptProject: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptProject, scriptId),
   scriptContent: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptContent, scriptId),
   updateScript: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.updateScript, input),

@@ -33,6 +33,8 @@ describe("Google Workspace first-party MCP gateway", () => {
         { original_name: "google_workspace_status" },
         { original_name: "apps_script_get_content" },
         { original_name: "apps_script_list_projects" },
+        { original_name: "apps_script_list_containers" },
+        { original_name: "apps_script_check_bound" },
         { original_name: "apps_script_patch_preview" },
         { original_name: "apps_script_patch_apply" },
         { original_name: "apps_script_comment_preview" },
@@ -82,6 +84,18 @@ describe("Google Workspace first-party MCP gateway", () => {
         newFingerprint: "b".repeat(64),
         changed: true, verified: true,
       })),
+      listAppsScriptContainers: vi.fn(async () => ({
+        containers: [{ containerId: "document0123456789abcdefgh", name: "PMT plan",
+          kind: "doc", modifiedTime: null,
+          editorUrl: "https://docs.google.com/document/d/document0123456789abcdefgh/edit" }],
+        nextPageToken: null, incompleteSearch: false, scriptsEnumerated: false,
+      })),
+      checkBoundAppsScript: vi.fn(async () => ({
+        scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+        containerId: "document0123456789abcdefgh", scriptTitle: "PMT Script",
+        editorUrl: "https://script.google.com/d/abcdefghijklmnopqrstuvwxy1234567890/edit",
+        match: "verified",
+      })),
       listAppsScriptProjects: vi.fn(async () => ({
         projects: [{
           scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
@@ -103,6 +117,8 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(policies.find((p) => p.toolName === "appsheet_find_rows")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "google_workspace_status")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_list_projects")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_list_containers")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_check_bound")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_patch_preview")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_patch_apply")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "apps_script_comment_preview")?.approval).toBe("automatic");
@@ -123,6 +139,8 @@ describe("Google Workspace first-party MCP gateway", () => {
       const catalog = await allowed.json() as { result: { tools: Array<{ name: string }> } };
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_get_content")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_projects")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_containers")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_check_bound")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_patch_preview")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_patch_apply")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_comment_preview")).toBe(true);
@@ -148,6 +166,30 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(listing.result.structuredContent.projects[0].name).toBe("Example project");
       expect(listing.result.structuredContent.nextPageToken).toBe("page2");
       expect(manager.listAppsScriptProjects).toHaveBeenCalledWith({ pageSize: 20, pageToken: "page1" });
+
+      const containerListed = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_list_containers",
+        arguments: { query: "PMT", pageSize: 10 },
+      });
+      const candidatePayload = await containerListed.json() as {
+        result: { structuredContent: { scriptsEnumerated: boolean; containers: Array<{ name: string }> } };
+      };
+      expect(candidatePayload.result.structuredContent.scriptsEnumerated).toBe(false);
+      expect(candidatePayload.result.structuredContent.containers[0].name).toBe("PMT plan");
+      expect(manager.listAppsScriptContainers).toHaveBeenCalledWith({ query: "PMT", pageSize: 10 });
+
+      const checked = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_check_bound",
+        arguments: { scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+          containerId: "document0123456789abcdefgh" },
+      });
+      const checkedPayload = await checked.json() as {
+        result: { structuredContent: { match: string } };
+      };
+      expect(checkedPayload.result.structuredContent.match).toBe("verified");
+      expect(manager.checkBoundAppsScript).toHaveBeenCalledWith(
+        "abcdefghijklmnopqrstuvwxy1234567890", "document0123456789abcdefgh",
+      );
 
       const scriptId = "abcdefghijklmnopqrstuvwxy1234567890";
       const preview = await send(`Bearer ${credential}`, "tools/call", {
