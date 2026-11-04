@@ -230,7 +230,7 @@ describe("Google Workspace Desktop secure adapters", () => {
     await expect(f.manager.applyAppsScriptComment({
       scriptId: SCRIPT_ID, fileName: "Shared Helpers.v2", commentLine,
       expectedFingerprint: contentFingerprint(files), confirmed: true,
-    })).rejects.toThrow(/network timeout after PUT/);
+    })).rejects.toThrow(/write may have succeeded but verification failed/);
     expect(f.fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(["GET", "GET", "PUT", "GET"]);
     await f.manager.shutdown();
   });
