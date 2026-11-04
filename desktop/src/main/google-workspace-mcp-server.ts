@@ -17,6 +17,10 @@ type ToolName =
   | "apps_script_get_project"
   | "apps_script_get_content"
   | "apps_script_update_content"
+  | "apps_script_patch_preview"
+  | "apps_script_patch_apply"
+  | "apps_script_comment_preview"
+  | "apps_script_comment_apply"
   | "apps_script_create_version"
   | "apps_script_create_deployment"
   | "appsheet_key_status"
@@ -31,6 +35,19 @@ interface Definition {
 const SCRIPT_ID = { type: "string", minLength: 12, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" };
 const APP_ID = { type: "string", minLength: 8, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$" };
 const REGION = { type: "string", enum: ["www.appsheet.com", "eu.appsheet.com", "asia-southeast.appsheet.com"] };
+const SCRIPT_PATCH_EDITS = {
+  type: "array", minItems: 1, maxItems: 16,
+  items: {
+    type: "object", additionalProperties: false,
+    properties: {
+      fileName: { type: "string", minLength: 1, maxLength: 128 },
+      operation: { type: "string", enum: ["replace_exact", "prepend", "append"] },
+      findText: { type: "string", minLength: 1, maxLength: 16384 },
+      text: { type: "string", minLength: 0, maxLength: 8192 },
+    },
+    required: ["fileName", "operation", "text"],
+  },
+};
 const TOOL_DEFINITIONS: Definition[] = [
   definition("google_workspace_status", "Read Google OAuth status and scope mode, never return tokens", {}, [], false),
   definition("apps_script_list_projects", "List standalone Apps Script project names, IDs, modified times and Editor links using read-only Google Drive metadata; requires explicit OAuth re-consent, returns one page", {
@@ -39,6 +56,28 @@ const TOOL_DEFINITIONS: Definition[] = [
   }, [], false),
   definition("apps_script_get_project", "Read metadata for one explicitly selected Google Apps Script project", { scriptId: SCRIPT_ID }, ["scriptId"], false),
   definition("apps_script_get_content", "Read Apps Script source files and manifest for one explicit script ID; project source may contain sensitive data", { scriptId: SCRIPT_ID }, ["scriptId"], false, "ask"),
+  definition("apps_script_patch_preview", "Preview exact bounded edits to existing Apps Script files; returns only filenames and fingerprints, not source", {
+    scriptId: SCRIPT_ID, edits: SCRIPT_PATCH_EDITS,
+  }, ["scriptId", "edits"], false),
+  definition("apps_script_patch_apply", "Apply one reviewed multi-file Apps Script patch in one guarded write. Verifies HEAD, preserves unmodified files, requires one approval, never retries uncertain writes", {
+    scriptId: SCRIPT_ID, edits: SCRIPT_PATCH_EDITS,
+    expectedFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    expectedPatchedFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    planFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    confirmed: { type: "boolean", const: true },
+  }, ["scriptId", "edits", "expectedFingerprint", "expectedPatchedFingerprint", "planFingerprint", "confirmed"], true, "ask"),
+  definition("apps_script_comment_preview", "Preview a single-line JavaScript comment at the start of one Apps Script source file; reads locally and returns only a fingerprint, file name and change summary (never full source)", {
+    scriptId: SCRIPT_ID,
+    fileName: { type: "string", minLength: 1, maxLength: 128 },
+    commentLine: { type: "string", minLength: 4, maxLength: 200, pattern: "^// " },
+  }, ["scriptId", "commentLine"], false),
+  definition("apps_script_comment_apply", "Apply one previously previewed single-line JavaScript // comment at the start of a source file; Desktop reads and preserves ALL current files, checks exact HEAD fingerprint, and verifies the change; explicit one-shot approval required, never retry on uncertain response", {
+    scriptId: SCRIPT_ID,
+    fileName: { type: "string", minLength: 1, maxLength: 128 },
+    commentLine: { type: "string", minLength: 4, maxLength: 200, pattern: "^// " },
+    expectedFingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    confirmed: { type: "boolean", const: true },
+  }, ["scriptId", "fileName", "commentLine", "expectedFingerprint", "confirmed"], true, "ask"),
   definition("apps_script_update_content", "Overwrite all Apps Script HEAD files ONLY after reviewing full file list, matching a freshly read SHA-256 fingerprint and receiving explicit confirmation; never retry on timeout", {
     scriptId: SCRIPT_ID,
     files: { type: "array", minItems: 1, maxItems: 200, items: { type: "object",
@@ -231,6 +270,34 @@ export class GoogleWorkspaceMcpServer {
       });
       case "apps_script_get_project": return this.manager.getAppsScriptProject(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_get_content": return this.manager.getAppsScriptContent(requiredString(args.scriptId, "scriptId", 160));
+      case "apps_script_patch_preview": return this.manager.previewAppsScriptPatch({
+        scriptId: requiredString(args.scriptId, "scriptId", 160),
+        edits: requireScriptEdits(args.edits),
+      });
+      case "apps_script_patch_apply":
+        if (args.confirmed !== true) throw new Error("Explicit reviewed Apps Script patch confirmation required");
+        return this.manager.applyAppsScriptPatch({
+          scriptId: requiredString(args.scriptId, "scriptId", 160),
+          edits: requireScriptEdits(args.edits),
+          expectedFingerprint: requiredString(args.expectedFingerprint, "expectedFingerprint", 64),
+          expectedPatchedFingerprint: requiredString(args.expectedPatchedFingerprint, "expectedPatchedFingerprint", 64),
+          planFingerprint: requiredString(args.planFingerprint, "planFingerprint", 64),
+          confirmed: true,
+        });
+      case "apps_script_comment_preview": return this.manager.previewAppsScriptComment({
+        scriptId: requiredString(args.scriptId, "scriptId", 160),
+        commentLine: requiredString(args.commentLine, "commentLine", 200),
+        ...(args.fileName === undefined ? {} : { fileName: requiredString(args.fileName, "fileName", 128) }),
+      });
+      case "apps_script_comment_apply":
+        if (args.confirmed !== true) throw new Error("Explicit Apps Script comment confirmation required");
+        return this.manager.applyAppsScriptComment({
+          scriptId: requiredString(args.scriptId, "scriptId", 160),
+          fileName: requiredString(args.fileName, "fileName", 128),
+          commentLine: requiredString(args.commentLine, "commentLine", 200),
+          expectedFingerprint: requiredString(args.expectedFingerprint, "expectedFingerprint", 64),
+          confirmed: true,
+        });
       case "apps_script_update_content": {
         const { scriptId, expectedFingerprint, confirmed, files } = args;
         if (confirmed !== true || !Array.isArray(files)) throw new Error("Explicit file update confirmation is required");
@@ -288,6 +355,15 @@ function requiredString(value: unknown, field: string, max: number): string {
     throw new Error(`Invalid Google Workspace ${field}`);
   }
   return value;
+}
+function requireScriptEdits(
+  value: unknown,
+): Parameters<GoogleWorkspaceManager["previewAppsScriptPatch"]>[0]["edits"] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 16) {
+    throw new Error("Apps Script patch needs 1–16 bounded edits");
+  }
+  // Desktop Main performs detailed validation at its own trust boundary.
+  return value as Parameters<GoogleWorkspaceManager["previewAppsScriptPatch"]>[0]["edits"];
 }
 function requirePageSize(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 100) {

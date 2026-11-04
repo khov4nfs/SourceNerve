@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 
 import type {
   AppsScriptProjectSummary,
+  AppsScriptCommentPreview,
+  AppsScriptPatchPreview,
+  AppsScriptTextEdit,
+  AppsScriptEditOperation,
   GoogleScriptAccessMode,
   GoogleWorkspaceStatus,
 } from "../../shared/google-workspace-api";
@@ -26,6 +30,15 @@ export function GoogleWorkspacePanel() {
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [incompleteSearch, setIncompleteSearch] = useState(false);
   const [scriptSummary, setScriptSummary] = useState("");
+  const [patchFileName, setPatchFileName] = useState("");
+  const [patchOperation, setPatchOperation] = useState<AppsScriptEditOperation>("replace_exact");
+  const [patchFindText, setPatchFindText] = useState("");
+  const [patchInsertText, setPatchInsertText] = useState("");
+  const [patchEdits, setPatchEdits] = useState<AppsScriptTextEdit[]>([]);
+  const [patchPreview, setPatchPreview] = useState<AppsScriptPatchPreview | null>(null);
+  const [commentFileName, setCommentFileName] = useState("");
+  const [commentLine, setCommentLine] = useState("");
+  const [commentPreview, setCommentPreview] = useState<AppsScriptCommentPreview | null>(null);
   const [appId, setAppId] = useState("");
   const [region, setRegion] = useState("www.appsheet.com");
   const [key, setKey] = useState("");
@@ -114,6 +127,9 @@ export function GoogleWorkspacePanel() {
                 setStatus(response.value);
                 setProjects([]);
                 setNextPageToken(null);
+                setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã lưu OAuth Desktop Client và phạm vi quyền. Đổi scope sẽ yêu cầu consent lại; chưa tự cấp quyền.");
                 setClientId("");
                 setClientSecret("");
@@ -128,6 +144,9 @@ export function GoogleWorkspacePanel() {
                 setProjects([]);
                 setNextPageToken(null);
                 setScriptSummary("");
+                setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã nhận phản hồi OAuth. Hãy kiểm tra quyền API trên tài khoản Google.");
               })}>Đăng nhập Google</ActionButton>
             <ActionButton size="sm" variant="destructive" disabled={Boolean(busy) || !status?.connected}
@@ -138,6 +157,9 @@ export function GoogleWorkspacePanel() {
                 setScriptSummary("");
                 setProjects([]);
                 setNextPageToken(null);
+                setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã ngắt và thu hồi kết nối Google.");
               })}>Ngắt kết nối</ActionButton>
           </div>
@@ -185,7 +207,7 @@ export function GoogleWorkspacePanel() {
                       <p className="text-xs text-muted-foreground break-all">Script ID: {project.scriptId}</p>
                       <p className="text-xs text-muted-foreground">Cập nhật: {project.modifiedTime ?? "Không có dữ liệu"}</p>
                       <ActionButton size="sm" variant="secondary"
-                        onClick={() => setScriptId(project.scriptId)}>Chọn Script ID</ActionButton>
+                        onClick={() => { setScriptId(project.scriptId); setCommentPreview(null); }}>Chọn Script ID</ActionButton>
                     </li>
                   ))}
                 </ul>
@@ -204,7 +226,10 @@ export function GoogleWorkspacePanel() {
           <label className="block text-xs space-y-1">
             <span>Apps Script ID (project được bạn chọn)</span>
             <input aria-label="Apps Script ID" className={fieldClass} value={scriptId}
-              placeholder="Script ID" onChange={(event) => setScriptId(event.target.value)} />
+              placeholder="Script ID" onChange={(event) => {
+                setScriptId(event.target.value);
+                setCommentPreview(null);
+              }} />
           </label>
           <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || !status?.connected || !scriptId}
             onClick={() => void perform("script", async () => {
@@ -214,6 +239,192 @@ export function GoogleWorkspacePanel() {
               setMessage("Đọc source thành công. Chưa push hay deploy.");
             })}>Kiểm tra source</ActionButton>
           {scriptSummary && <p className="text-xs break-all text-muted-foreground">{scriptSummary}</p>}
+
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Kế hoạch sửa mã nguồn (HEAD)</p>
+            <p className="text-xs text-muted-foreground">
+              Thay thế đoạn mã khớp chính xác hoặc thêm đầu/cuối file. Có thể gom tối đa 16 chỉnh sửa
+              thành một kế hoạch, một lần ghi có phê duyệt. SourceNerve tự giữ tất cả file còn lại
+              trong Desktop; không gửi source code toàn dự án qua ChatGPT.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Tên file Apps Script (không gồm đuôi .gs/.html)</span>
+              <input aria-label="Apps Script patch filename" className={fieldClass}
+                value={patchFileName} onChange={(event) => setPatchFileName(event.target.value)}
+                placeholder="Code" />
+            </label>
+            <label className="block text-xs space-y-1">
+              <span>Loại chỉnh sửa</span>
+              <select aria-label="Apps Script patch operation" className={fieldClass}
+                value={patchOperation}
+                onChange={(event) => setPatchOperation(event.target.value as AppsScriptEditOperation)}>
+                <option value="replace_exact">Thay thế một đoạn khớp chính xác duy nhất</option>
+                <option value="prepend">Thêm vào đầu file</option>
+                <option value="append">Thêm vào cuối file</option>
+              </select>
+            </label>
+            {patchOperation === "replace_exact" && (
+              <label className="block text-xs space-y-1">
+                <span>Đoạn cần tìm (khớp chính xác một lần, tối đa 16 KiB)</span>
+                <textarea aria-label="Apps Script patch find text" rows={3}
+                  className={fieldClass} value={patchFindText}
+                  onChange={(event) => setPatchFindText(event.target.value)} />
+              </label>
+            )}
+            <label className="block text-xs space-y-1">
+              <span>{patchOperation === "replace_exact" ? "Đoạn thay thế" : "Nội dung cần chèn"} (tối đa 8 KiB)</span>
+              <textarea aria-label="Apps Script patch replacement text" rows={3}
+                className={fieldClass} value={patchInsertText}
+                onChange={(event) => setPatchInsertText(event.target.value)} />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) ||
+                patchEdits.length >= 16 || !patchFileName.trim() ||
+                (patchOperation !== "replace_exact" && !patchInsertText) ||
+                (patchOperation === "replace_exact" && !patchFindText)}
+                onClick={() => {
+                  setPatchEdits((previous) => [...previous, {
+                    fileName: patchFileName.trim(), operation: patchOperation,
+                    ...(patchOperation === "replace_exact" ? { findText: patchFindText } : {}),
+                    text: patchInsertText,
+                  }]);
+                  setPatchPreview(null);
+                  setPatchFindText("");
+                  setPatchInsertText("");
+                }}>Thêm vào kế hoạch</ActionButton>
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || patchEdits.length === 0}
+                onClick={() => { setPatchEdits([]); setPatchPreview(null); }}>Xóa kế hoạch</ActionButton>
+            </div>
+            {patchEdits.length > 0 && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>{patchEdits.length} chỉnh sửa đã chọn:</p>
+                <ul className="list-disc pl-4">
+                  {patchEdits.map((edit, index) => (
+                    <li key={index} className="space-y-1">
+                      <p>{edit.fileName} · {edit.operation}</p>
+                      {edit.operation === "replace_exact" && (
+                        <pre className="overflow-auto whitespace-pre-wrap break-all rounded border border-border p-2">{edit.findText}</pre>
+                      )}
+                      <p>{edit.operation === "replace_exact" ? "Thành:" : "Chèn:"}</p>
+                      <pre className="overflow-auto whitespace-pre-wrap break-all rounded border border-border p-2">{edit.text || "(xóa đoạn khớp)"}</pre>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status?.connected || !scriptId.trim() || patchEdits.length === 0}
+                onClick={() => void perform("patch-preview", async () => {
+                  setPatchPreview(null);
+                  const result = await api.previewScriptPatch({ scriptId: scriptId.trim(), edits: patchEdits });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setPatchPreview(result.value);
+                  setMessage("Đã xem trước kế hoạch sửa mã; chưa thay đổi Google Apps Script.");
+                })}>Xem trước kế hoạch</ActionButton>
+              <ActionButton size="sm" disabled={Boolean(busy) || !status?.connected ||
+                status.mode === "read" || !patchPreview || !patchPreview.wouldChange ||
+                patchPreview.scriptId !== scriptId.trim() ||
+                patchPreview.editCount !== patchEdits.length}
+                onClick={() => void perform("patch-apply", async () => {
+                  if (!patchPreview) return;
+                  const result = await api.applyScriptPatch({
+                    scriptId: patchPreview.scriptId,
+                    edits: patchEdits,
+                    expectedFingerprint: patchPreview.expectedFingerprint,
+                    expectedPatchedFingerprint: patchPreview.expectedPatchedFingerprint,
+                    planFingerprint: patchPreview.planFingerprint,
+                    confirmed: true,
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setPatchPreview(null);
+                  setPatchEdits([]);
+                  setMessage(result.value.changed
+                    ? "Đã ghi và xác minh kế hoạch sửa Apps Script HEAD thành công."
+                    : "Kế hoạch đã có sẵn trên HEAD, không cần ghi lại.");
+                })}>Ghi kế hoạch đã duyệt</ActionButton>
+            </div>
+            {patchPreview && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>{patchPreview.editCount} chỉnh sửa · {patchPreview.changedFiles.length} file sẽ thay đổi</p>
+                <p>File: {patchPreview.changedFiles.join(", ") || "Không có thay đổi"}</p>
+                <p className="break-all">HEAD: {patchPreview.expectedFingerprint}</p>
+                <p className="break-all">Sau khi ghi: {patchPreview.expectedPatchedFingerprint}</p>
+                <p>Manifest và các file không được chọn sẽ được giữ nguyên.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Thêm một dòng comment (HEAD)</p>
+            <p className="text-xs text-muted-foreground">
+              Xem trước bằng fingerprint mà không đưa source code qua ChatGPT.
+              Nhấn Ghi chỉ sau khi kiểm tra dự án, file và comment. Thay đổi HEAD có thể ảnh hưởng trigger;
+              không tạo version hoặc deployment.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Tên file .gs (để trống nếu dự án chỉ có một file .gs)</span>
+              <input aria-label="Apps Script comment filename" className={fieldClass}
+                value={commentFileName} onChange={(event) => {
+                  setCommentFileName(event.target.value);
+                  setCommentPreview(null);
+                }} placeholder="Code" />
+            </label>
+            <label className="block text-xs space-y-1">
+              <span>Đúng một dòng comment, bắt đầu bằng // </span>
+              <input aria-label="Apps Script comment text" className={fieldClass}
+                value={commentLine} onChange={(event) => {
+                  setCommentLine(event.target.value);
+                  setCommentPreview(null);
+                }} placeholder="// SourceNerve: kiểm tra cập nhật Apps Script từ ChatGPT." />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status?.connected || !scriptId.trim() ||
+                  !commentLine.startsWith("// ")}
+                onClick={() => void perform("comment-preview", async () => {
+                  setCommentPreview(null);
+                  const result = await api.previewScriptComment({
+                    scriptId: scriptId.trim(),
+                    commentLine,
+                    ...(commentFileName.trim() ? { fileName: commentFileName.trim() } : {}),
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setCommentPreview(result.value);
+                  setMessage("Đã xem trước bản vá nhỏ, chưa ghi Apps Script.");
+                })}>Xem trước comment</ActionButton>
+              <ActionButton size="sm" disabled={Boolean(busy) || !status?.connected ||
+                status.mode === "read" || !commentPreview || !commentPreview.wouldChange ||
+                scriptId.trim() !== commentPreview.scriptId ||
+                commentLine !== commentPreview.commentLine ||
+                (commentFileName.trim() !== "" && commentFileName.trim() !== commentPreview.fileName)}
+                onClick={() => void perform("comment-apply", async () => {
+                  if (!commentPreview) return;
+                  const result = await api.applyScriptComment({
+                    scriptId: commentPreview.scriptId,
+                    fileName: commentPreview.fileName,
+                    commentLine: commentPreview.commentLine,
+                    expectedFingerprint: commentPreview.expectedFingerprint,
+                    confirmed: true,
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setCommentPreview(null);
+                  setMessage(result.value.changed
+                    ? "Đã ghi và kiểm tra lại đúng một dòng comment trên Apps Script HEAD."
+                    : "Comment đã tồn tại ở đầu file, không ghi lại.");
+                })}>Ghi comment đã duyệt</ActionButton>
+            </div>
+            {commentPreview && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>File: {commentPreview.fileName} · {commentPreview.fileCount} tệp được giữ nguyên</p>
+                <p className="break-all">Fingerprint: {commentPreview.expectedFingerprint}</p>
+                <p>Thay đổi: {commentPreview.wouldChange
+                  ? "Thêm đúng một dòng ở đầu file"
+                  : "Comment đã có sẵn; không cần ghi"}</p>
+                <p>Manifest: giữ nguyên</p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg border border-border p-3 space-y-3">

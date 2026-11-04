@@ -493,6 +493,8 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
             matches!(
                 operation,
                 "apps_script_list_projects"
+                    | "apps_script_comment_preview"
+                    | "apps_script_comment_apply"
                     | "apps_script_get_project"
                     | "apps_script_get_content"
                     | "apps_script_update_content"
