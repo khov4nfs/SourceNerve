@@ -10,6 +10,7 @@ const pluginPath = new URL("../plugins/sourcenerve/.codex-plugin/plugin.json", i
 const documentationPath = new URL("../docs/google-workspace-chatgpt-agent.md", import.meta.url);
 const oauthPolicyPath = new URL("../integrations/google-workspace/google-oauth.policy.json", import.meta.url);
 const oauthDesignPath = new URL("../docs/google-workspace-oauth-design.md", import.meta.url);
+const commentPatchPath = new URL("../docs/google-workspace-comment-patch.md", import.meta.url);
 
 const extension = JSON.parse(await readFile(extensionPath, "utf8"));
 const skill = await readFile(skillPath, "utf8");
@@ -17,6 +18,7 @@ const plugin = JSON.parse(await readFile(pluginPath, "utf8"));
 const doc = await readFile(documentationPath, "utf8");
 const oauthPolicy = JSON.parse(await readFile(oauthPolicyPath, "utf8"));
 const oauthDesign = await readFile(oauthDesignPath, "utf8");
+const commentPatch = await readFile(commentPatchPath, "utf8");
 
 assert.equal(extension.id, "google-clasp-mcp");
 assert.equal(extension.namespace, "clasp");
@@ -56,6 +58,10 @@ for (const invariant of [
   "chưa",
 ]) {
   assert.ok(doc.includes(invariant), `the setup guide must describe ${invariant}`);
+}
+
+for (const invariant of ["apps_script_comment_preview", "apps_script_comment_apply", "Ask", "fingerprint", "không"]) {
+  assert.ok(commentPatch.includes(invariant), `comment patch documentation must cover ${invariant}`);
 }
 
 assert.equal(oauthPolicy.provider, "google");
