@@ -67,6 +67,69 @@ export interface AppsScriptUpdateInput {
   expectedFingerprint: string;
   confirmed: true;
 }
+export type AppsScriptEditOperation = "replace_exact" | "prepend" | "append";
+export interface AppsScriptTextEdit {
+  fileName: string;
+  operation: AppsScriptEditOperation;
+  findText?: string;
+  text: string;
+}
+export interface AppsScriptPatchPreviewInput {
+  scriptId: string;
+  edits: AppsScriptTextEdit[];
+}
+export interface AppsScriptPatchPreview {
+  scriptId: string;
+  expectedFingerprint: string;
+  expectedPatchedFingerprint: string;
+  planFingerprint: string;
+  editCount: number;
+  changedFiles: string[];
+  fileCount: number;
+  manifestPreserved: true;
+  wouldChange: boolean;
+}
+export interface AppsScriptPatchApplyInput extends AppsScriptPatchPreviewInput {
+  expectedFingerprint: string;
+  expectedPatchedFingerprint: string;
+  planFingerprint: string;
+  confirmed: true;
+}
+export interface AppsScriptPatchApplyResult {
+  scriptId: string;
+  previousFingerprint: string;
+  newFingerprint: string;
+  changedFiles: string[];
+  changed: boolean;
+  verified: true;
+}
+export interface AppsScriptCommentPatchInput {
+  scriptId: string;
+  commentLine: string;
+  fileName?: string;
+}
+export interface AppsScriptCommentPreview {
+  scriptId: string;
+  fileName: string;
+  commentLine: string;
+  expectedFingerprint: string;
+  position: "file-start";
+  wouldChange: boolean;
+  fileCount: number;
+  manifestPreserved: true;
+}
+export interface AppsScriptCommentApplyInput extends AppsScriptCommentPatchInput {
+  expectedFingerprint: string;
+  confirmed: true;
+}
+export interface AppsScriptCommentApplyResult {
+  scriptId: string;
+  fileName: string;
+  previousFingerprint: string;
+  newFingerprint: string;
+  changed: boolean;
+  verified: true;
+}
 export interface AppSheetKeyInput {
   appId: string;
   region: string;
@@ -281,6 +344,182 @@ export class GoogleWorkspaceManager {
     };
   }
 
+  /**
+   * Generic bounded text patches: the caller sends only exact small edits.
+   * Source and manifest remain inside Desktop Main; preview discloses only
+   * fingerprints and filenames. Multiple edits are applied in caller order
+   * and committed in one guarded write, not as repeated patch approvals.
+   */
+  async previewAppsScriptPatch(input: AppsScriptPatchPreviewInput): Promise<AppsScriptPatchPreview> {
+    scriptPath(input.scriptId);
+    validateAppsScriptEdits(input.edits);
+    const current = await this.getAppsScriptContent(input.scriptId);
+    const planned = buildAppsScriptPatch(current.files, input.edits);
+    const expectedPatchedFingerprint = contentFingerprint(planned.files);
+    return {
+      scriptId: input.scriptId,
+      expectedFingerprint: current.fingerprint,
+      expectedPatchedFingerprint,
+      planFingerprint: patchPlanFingerprint(input.scriptId, current.fingerprint, input.edits),
+      editCount: input.edits.length,
+      changedFiles: planned.changedFiles,
+      fileCount: current.files.length,
+      manifestPreserved: true,
+      wouldChange: current.fingerprint !== expectedPatchedFingerprint,
+    };
+  }
+
+  /**
+   * One-shot apply for an entire reviewed edit set. No whole-file payload
+   * crosses MCP or the renderer. Error/timeout after PUT is never retried
+   * automatically; verification is read-only and errors are non-success.
+   */
+  async applyAppsScriptPatch(input: AppsScriptPatchApplyInput): Promise<AppsScriptPatchApplyResult> {
+    scriptPath(input.scriptId);
+    validateAppsScriptEdits(input.edits);
+    if (input.confirmed !== true || !/^[0-9a-f]{64}$/.test(input.expectedFingerprint) ||
+        !/^[0-9a-f]{64}$/.test(input.expectedPatchedFingerprint) ||
+        !/^[0-9a-f]{64}$/.test(input.planFingerprint)) {
+      throw new Error("Apps Script patch requires explicit confirmation and reviewed fingerprints");
+    }
+    if (patchPlanFingerprint(input.scriptId, input.expectedFingerprint, input.edits) !== input.planFingerprint) {
+      throw new Error("Apps Script patch differs from reviewed edit plan");
+    }
+    const mode = (await this.googleStatus()).mode;
+    if (!mode || !modeAllows(mode, "edit")) {
+      throw new Error("Google Apps Script scope insufficient; reconnect with explicit permission");
+    }
+    const current = await this.getAppsScriptContent(input.scriptId);
+    if (current.fingerprint !== input.expectedFingerprint) {
+      throw new Error("Apps Script remote content changed; re-preview your patch before writing");
+    }
+    const planned = buildAppsScriptPatch(current.files, input.edits);
+    if (contentFingerprint(planned.files) !== input.expectedPatchedFingerprint) {
+      throw new Error("Apps Script planned content differs from reviewed fingerprint");
+    }
+    if (planned.changedFiles.length === 0) {
+      return {
+        scriptId: input.scriptId, previousFingerprint: current.fingerprint,
+        newFingerprint: current.fingerprint, changedFiles: [],
+        changed: false, verified: true,
+      };
+    }
+    const updated = await this.updateAppsScriptContent({
+      scriptId: input.scriptId,
+      files: planned.files,
+      expectedFingerprint: current.fingerprint,
+      confirmed: true,
+    });
+    if (updated.fingerprint !== input.expectedPatchedFingerprint) {
+      throw new Error("Apps Script PUT result differs from reviewed patch; re-preview before retrying");
+    }
+    let verified: AppsScriptContent;
+    try { verified = await this.getAppsScriptContent(input.scriptId); }
+    catch {
+      throw new Error("Apps Script patch may have been applied but verification failed; re-preview before retrying");
+    }
+    if (verified.fingerprint !== input.expectedPatchedFingerprint) {
+      throw new Error("Apps Script post-write verification mismatch; inspect before retrying");
+    }
+    return {
+      scriptId: input.scriptId,
+      previousFingerprint: current.fingerprint,
+      newFingerprint: verified.fingerprint,
+      changedFiles: planned.changedFiles,
+      changed: true,
+      verified: true,
+    };
+  }
+
+  /**
+   * Preview is metadata-only from the caller's perspective. Read entire source
+   * only in the Desktop Main process, then return a small hash and exact intent.
+   * No source file contents are returned through the public MCP bridge.
+   */
+  async previewAppsScriptComment(input: AppsScriptCommentPatchInput): Promise<AppsScriptCommentPreview> {
+    validateScriptCommentPatch(input);
+    const current = await this.getAppsScriptContent(input.scriptId);
+    assertScriptManifest(current.files);
+    const file = selectCommentFile(current.files, input.fileName);
+    return {
+      scriptId: input.scriptId,
+      fileName: file.name,
+      commentLine: input.commentLine,
+      expectedFingerprint: current.fingerprint,
+      position: "file-start",
+      wouldChange: !startsWithScriptComment(file.source, input.commentLine),
+      fileCount: current.files.length,
+      manifestPreserved: true,
+    };
+  }
+
+  /**
+   * Intentionally narrow edit operation. The caller supplies only a one-line
+   * JavaScript comment + expected HEAD fingerprint; the original project files
+   * never travel through ChatGPT, an MCP tool request or the renderer.
+   *
+   * Google updateContent replaces all HEAD files. Reuse the existing guarded
+   * full-content updater inside Main, then re-read once to verify the result.
+   * Never automatically retry an ambiguous PUT / timeout.
+   */
+  async applyAppsScriptComment(input: AppsScriptCommentApplyInput): Promise<AppsScriptCommentApplyResult> {
+    validateScriptCommentPatch(input);
+    if (input.confirmed !== true || !/^[0-9a-f]{64}$/.test(input.expectedFingerprint)) {
+      throw new Error("Apps Script comment requires an explicit confirmation and preview fingerprint");
+    }
+    const mode = (await this.googleStatus()).mode;
+    if (!mode || !modeAllows(mode, "edit")) {
+      throw new Error("Google Apps Script scope insufficient; reconnect with explicit permission");
+    }
+    const current = await this.getAppsScriptContent(input.scriptId);
+    if (current.fingerprint !== input.expectedFingerprint) {
+      throw new Error("Apps Script remote content changed; preview the comment again before writing");
+    }
+    assertScriptManifest(current.files);
+    const file = selectCommentFile(current.files, input.fileName);
+    if (startsWithScriptComment(file.source, input.commentLine)) {
+      return {
+        scriptId: input.scriptId,
+        fileName: file.name,
+        previousFingerprint: current.fingerprint,
+        newFingerprint: current.fingerprint,
+        changed: false,
+        verified: true,
+      };
+    }
+    const separator = file.source.includes("\r\n") ? "\r\n" : "\n";
+    const files = current.files.map((entry): AppsScriptFile => (
+      entry === file ? { ...entry, source: input.commentLine + separator + entry.source } : entry
+    ));
+    const expectedNextFingerprint = contentFingerprint(files);
+    const updated = await this.updateAppsScriptContent({
+      scriptId: input.scriptId,
+      files,
+      expectedFingerprint: input.expectedFingerprint,
+      confirmed: true,
+    });
+    if (updated.fingerprint !== expectedNextFingerprint) {
+      throw new Error("Apps Script update response differed from the planned comment; re-preview before retrying");
+    }
+    let verified: AppsScriptContent;
+    try {
+      verified = await this.getAppsScriptContent(input.scriptId);
+    } catch {
+      throw new Error("Apps Script write may have succeeded but verification failed; re-preview before retrying");
+    }
+    if (verified.fingerprint !== expectedNextFingerprint) {
+      throw new Error("Apps Script post-write content differs from the planned comment; inspect before retrying");
+    }
+    return {
+      scriptId: input.scriptId,
+      fileName: file.name,
+      previousFingerprint: input.expectedFingerprint,
+      newFingerprint: expectedNextFingerprint,
+      changed: true,
+      verified: true,
+    };
+  }
+
   async updateAppsScriptContent(input: AppsScriptUpdateInput): Promise<AppsScriptContent> {
     if (input.confirmed !== true) throw new Error("Explicit Apps Script update confirmation required");
     if (!/^[a-f0-9]{64}$/.test(input.expectedFingerprint)) throw new Error("Invalid expected fingerprint");
@@ -404,6 +643,119 @@ export class GoogleWorkspaceManager {
     }
     return payload as Record<string, unknown>;
   }
+}
+
+/**
+ * Validate and apply small, ordered, exact text edits against a local HEAD
+ * snapshot. No arbitrary code execution or provider request occurs here.
+ * JSON files must remain valid JSON, including the project manifest.
+ */
+export function validateAppsScriptEdits(edits: AppsScriptTextEdit[]): void {
+  if (!Array.isArray(edits) || edits.length < 1 || edits.length > 16) {
+    throw new Error("Apps Script patch requires 1–16 bounded text edits");
+  }
+  let combinedBytes = 0;
+  for (const edit of edits) {
+    if (!edit || typeof edit !== "object" || Array.isArray(edit) ||
+        Object.keys(edit).some((key) => !["fileName", "operation", "findText", "text"].includes(key)) ||
+        !validScriptFileName(edit.fileName) ||
+        !["replace_exact", "prepend", "append"].includes(edit.operation) ||
+        typeof edit.text !== "string" || (edit.operation !== "replace_exact" && edit.text.length < 1) ||
+        Buffer.byteLength(edit.text) > 8192 ||
+        /\0/.test(edit.text)) {
+      throw new Error("Invalid Apps Script text edit");
+    }
+    if (edit.operation === "replace_exact") {
+      if (typeof edit.findText !== "string" || edit.findText.length < 1 ||
+          Buffer.byteLength(edit.findText) > 16384 || edit.findText.includes("\0")) {
+        throw new Error("replace_exact requires a bounded nonempty findText");
+      }
+    } else if (edit.findText !== undefined) {
+      throw new Error("findText is only allowed for replace_exact");
+    }
+    combinedBytes += Buffer.byteLength(edit.text) +
+      (edit.findText === undefined ? 0 : Buffer.byteLength(edit.findText));
+  }
+  if (combinedBytes > 64 * 1024) {
+    throw new Error("Apps Script patch payload exceeds 64 KiB");
+  }
+}
+function validScriptFileName(name: unknown): name is string {
+  return typeof name === "string" && name.length >= 1 && name.length <= 128 &&
+    name !== "." && name !== ".." && !/[\/\\\r\n\0]/.test(name);
+}
+function patchPlanFingerprint(scriptId: string, fingerprint: string, edits: AppsScriptTextEdit[]): string {
+  return createHash("sha256").update(JSON.stringify({ scriptId, fingerprint, edits })).digest("hex");
+}
+function buildAppsScriptPatch(
+  files: AppsScriptFile[], edits: AppsScriptTextEdit[],
+): { files: AppsScriptFile[]; changedFiles: string[] } {
+  assertScriptManifest(files);
+  const next = files.map((file) => ({ ...file }));
+  if (new Set(next.map((file) => file.name)).size !== next.length) {
+    throw new Error("Apps Script file names are ambiguous; refusing patch");
+  }
+  for (const edit of edits) {
+    const file = next.find((entry) => entry.name === edit.fileName);
+    if (!file) throw new Error("Apps Script patch file not found in HEAD");
+    const before = file.source;
+    if (edit.operation === "replace_exact") {
+      const needle = edit.findText!;
+      const first = before.indexOf(needle);
+      if (first < 0 || before.indexOf(needle, first + 1) >= 0) {
+        throw new Error("Exact patch text must occur exactly once; re-preview with a unique context");
+      }
+      file.source = before.slice(0, first) + edit.text + before.slice(first + needle.length);
+    } else if (edit.operation === "prepend") {
+      file.source = before.startsWith(edit.text) ? before : edit.text + before;
+    } else {
+      file.source = before.endsWith(edit.text) ? before : before + edit.text;
+    }
+    if (Buffer.byteLength(file.source) > MAX_RESPONSE_BYTES) {
+      throw new Error("Apps Script patched file exceeds size limit");
+    }
+    if (file.type === "JSON") {
+      try { JSON.parse(file.source); }
+      catch { throw new Error("Apps Script JSON file must remain valid after patch"); }
+    }
+  }
+  if (Buffer.byteLength(JSON.stringify({ files: next })) > MAX_RESPONSE_BYTES) {
+    throw new Error("Apps Script patched project exceeds size limit");
+  }
+  const changedFiles = next.filter((file, index) => file.source !== files[index].source)
+    .map((file) => file.name);
+  return { files: next, changedFiles };
+}
+function validateScriptCommentPatch(input: AppsScriptCommentPatchInput): void {
+  scriptPath(input.scriptId);
+  if (typeof input.commentLine !== "string" || input.commentLine.length < 4 ||
+      input.commentLine.length > 200 || Buffer.byteLength(input.commentLine, "utf8") > 512 ||
+      !input.commentLine.startsWith("// ") || /[\r\n\0\u2028\u2029]/.test(input.commentLine)) {
+    throw new Error("Comment must be a single JavaScript // line, at most 200 characters");
+  }
+  if (input.fileName !== undefined && (typeof input.fileName !== "string" ||
+      input.fileName.length < 1 || input.fileName.length > 128 ||
+      input.fileName === "." || input.fileName === ".." ||
+      /[\r\n\0/\\]/.test(input.fileName))) {
+    throw new Error("Invalid Apps Script source filename");
+  }
+}
+function assertScriptManifest(files: AppsScriptFile[]): void {
+  if (!files.some((file) => file.name === "appsscript" && file.type === "JSON")) {
+    throw new Error("Apps Script manifest is missing; refusing a comment patch");
+  }
+}
+function selectCommentFile(files: AppsScriptFile[], fileName?: string): AppsScriptFile {
+  const targets = files.filter((file) => file.type === "SERVER_JS" &&
+    (fileName === undefined || file.name === fileName));
+  if (targets.length !== 1) {
+    throw new Error("Select exactly one Apps Script SERVER_JS filename for the comment");
+  }
+  return targets[0];
+}
+function startsWithScriptComment(source: string, comment: string): boolean {
+  return source === comment || source.startsWith(comment + "\n") ||
+    source.startsWith(comment + "\r\n");
 }
 
 export function contentFingerprint(files: AppsScriptFile[]): string {

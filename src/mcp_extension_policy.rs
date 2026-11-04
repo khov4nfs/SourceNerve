@@ -61,6 +61,11 @@ pub fn complete_known_browser_classification(
         | "list_console_messages"
         | "list_network_requests"
         | "list_pages"
+        | "get_network_request"
+        | "take_screenshot"
+        | "take_snapshot"
+        | "take_heapsnapshot"
+        | "wait_for"
         | "performance_analyze_insight" => true,
         "click"
         | "close_page"
@@ -69,7 +74,6 @@ pub fn complete_known_browser_classification(
         | "evaluate_script"
         | "fill"
         | "fill_form"
-        | "get_network_request"
         | "handle_dialog"
         | "hover"
         | "lighthouse_audit"
@@ -80,9 +84,6 @@ pub fn complete_known_browser_classification(
         | "press_key"
         | "resize_page"
         | "select_page"
-        | "take_heapsnapshot"
-        | "take_screenshot"
-        | "take_snapshot"
         | "type_text"
         | "upload_file" => false,
         _ => return hint,
@@ -118,6 +119,8 @@ pub fn complete_known_google_workspace_classification(
     if !matches!(
         public_name,
         "google-workspace__apps_script_list_projects"
+            | "google-workspace__apps_script_patch_preview"
+            | "google-workspace__apps_script_comment_preview"
             | "google-workspace__apps_script_get_project"
             | "google-workspace__apps_script_get_content"
             | "google-workspace__appsheet_find_rows"
@@ -477,9 +480,38 @@ mod tests {
     }
 
     #[test]
+    fn browser_observation_tools_do_not_require_write_dispatch() {
+        for name in [
+            "get_network_request",
+            "take_screenshot",
+            "take_snapshot",
+            "take_heapsnapshot",
+            "wait_for",
+        ] {
+            let public_name = format!("chrome-devtools-mcp-6f0fffa__{name}");
+            let resolved =
+                complete_known_browser_classification(&public_name, ToolClassification::default());
+            assert_eq!(resolved.read_only, Some(true), "{name}");
+            assert_eq!(resolved.destructive, Some(false), "{name}");
+        }
+        let conflict = complete_known_browser_classification(
+            "chrome-devtools-mcp-6f0fffa__take_screenshot",
+            ToolClassification {
+                read_only: Some(false),
+                destructive: Some(true),
+                idempotent: None,
+                open_world: None,
+            },
+        );
+        assert_eq!(conflict.read_only, Some(false));
+    }
+
+    #[test]
     fn first_party_google_workspace_reads_use_read_dispatcher() {
         for public_name in [
             "google-workspace__apps_script_list_projects",
+            "google-workspace__apps_script_patch_preview",
+            "google-workspace__apps_script_comment_preview",
             "google-workspace__apps_script_get_project",
             "google-workspace__apps_script_get_content",
             "google-workspace__appsheet_find_rows",
@@ -514,6 +546,8 @@ mod tests {
         );
         for name in [
             "google-workspace__apps_script_update_content",
+            "google-workspace__apps_script_patch_apply",
+            "google-workspace__apps_script_comment_apply",
             "google-workspace__apps_script_create_version",
             "google-workspace__apps_script_create_deployment",
             "google-workspace__apps_script_list_projects_and_delete",

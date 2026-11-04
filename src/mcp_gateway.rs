@@ -34,12 +34,15 @@ const MAX_CREDENTIAL_BYTES: usize = 16 * 1024;
 const MAX_ENV_ENTRIES: usize = 32;
 const MAX_ENV_VALUE_BYTES: usize = 32 * 1024;
 const MAX_CAPABILITY_TOOL_NAMES: usize = 24;
+/// Tool grants are explicit opt-in and short-lived, not a replacement for OAuth or tool policy.
+const MAX_TOOL_SCOPE_USES: u8 = 12;
 
 static MATERIALIZED_CREDENTIALS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
 static MATERIALIZED_ENVIRONMENTS: OnceLock<RwLock<HashMap<String, BTreeMap<String, String>>>> =
     OnceLock::new();
 static ONE_SHOT_APPROVALS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 static SCOPED_ONE_SHOT_APPROVALS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static SCOPED_TOOL_APPROVALS: OnceLock<Mutex<HashMap<String, ScopedToolGrant>>> = OnceLock::new();
 static PENDING_EXTENSION_APPROVALS: OnceLock<Mutex<HashMap<String, PendingExtensionApproval>>> =
     OnceLock::new();
 
@@ -48,7 +51,14 @@ struct PendingExtensionApproval {
     public_tool: String,
     principal_id: String,
     argument_sha256: String,
+    resource_scope: Option<String>,
     expires_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedToolGrant {
+    expires_at: Instant,
+    remaining: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +102,82 @@ fn pending_approvals() -> &'static Mutex<HashMap<String, PendingExtensionApprova
     PENDING_EXTENSION_APPROVALS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn tool_approvals() -> &'static Mutex<HashMap<String, ScopedToolGrant>> {
+    SCOPED_TOOL_APPROVALS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn tool_approval_key(principal_id: &str, public_tool: &str, scope: Option<&str>) -> String {
+    format!(
+        "{principal_id}\u{1f}{public_tool}\u{1f}{}",
+        scope.unwrap_or("")
+    )
+}
+
+/// Tie a repeated operation to its stable external resource when the tool
+/// exposes one. Hash values so approval state never stores private IDs/paths.
+fn request_resource_scope(request: &CallToolRequestParams) -> Option<String> {
+    let args = request.arguments.as_ref()?;
+    for key in [
+        "script_id",
+        "scriptId",
+        "project_id",
+        "projectId",
+        "app_id",
+        "appId",
+        "file_id",
+        "fileId",
+        "document_id",
+        "documentId",
+        "spreadsheet_id",
+        "spreadsheetId",
+        "repository",
+        "path",
+    ] {
+        if let Some(value) = args.get(key).and_then(serde_json::Value::as_str)
+            && !value.is_empty()
+        {
+            return Some(format!(
+                "{key}:{}",
+                hex::encode(Sha256::digest(value.as_bytes()))
+            ));
+        }
+    }
+    None
+}
+
+/// Explicit scoped consent is unavailable for destructive or arbitrary-code
+/// operations; these continue to require exact one-shot confirmation.
+pub(crate) fn eligible_for_tool_scope(public_tool: &str) -> bool {
+    let operation = public_tool
+        .rsplit_once("__")
+        .map(|(_, name)| name)
+        .unwrap_or(public_tool);
+    !operation.split(['_', '-']).any(|word| {
+        matches!(
+            word,
+            "delete"
+                | "remove"
+                | "drop"
+                | "reset"
+                | "clear"
+                | "revoke"
+                | "execute"
+                | "eval"
+                | "evaluate"
+                | "upload"
+                | "transfer"
+                | "payment"
+                | "purchase"
+                | "permission"
+                | "permissions"
+                | "send"
+                | "share"
+                | "grant"
+                | "approve"
+        )
+    })
+}
+
 fn scoped_approval_key(principal_id: &str, public_tool: &str, argument_sha256: &str) -> String {
     format!("{principal_id}\u{1f}{public_tool}\u{1f}{argument_sha256}")
 }
@@ -110,6 +196,7 @@ async fn request_pending_approval(
     principal_id: &str,
     public_tool: &str,
     argument_sha256: &str,
+    resource_scope: Option<String>,
 ) -> (String, u64) {
     let now = Instant::now();
     let mut pending = pending_approvals().lock().await;
@@ -132,6 +219,7 @@ async fn request_pending_approval(
             public_tool: public_tool.to_owned(),
             principal_id: principal_id.to_owned(),
             argument_sha256: argument_sha256.to_owned(),
+            resource_scope,
             expires_at,
         },
     );
@@ -152,6 +240,25 @@ async fn consume_scoped_approval(
         .is_some_and(|expires_at| expires_at > now)
 }
 
+async fn consume_tool_approval(
+    principal_id: &str,
+    public_tool: &str,
+    resource_scope: Option<&str>,
+) -> bool {
+    let key = tool_approval_key(principal_id, public_tool, resource_scope);
+    let mut grants = tool_approvals().lock().await;
+    let now = Instant::now();
+    grants.retain(|_, grant| grant.expires_at > now && grant.remaining > 0);
+    let Some(grant) = grants.get_mut(&key) else {
+        return false;
+    };
+    grant.remaining -= 1;
+    if grant.remaining == 0 {
+        grants.remove(&key);
+    }
+    true
+}
+
 pub async fn pending_approval_exists(approval_id: &str) -> bool {
     let now = Instant::now();
     let mut pending = pending_approvals().lock().await;
@@ -165,9 +272,9 @@ pub async fn respond_pending_approval(
     principal_id: &str,
     operator: bool,
 ) -> AppResult<Option<serde_json::Value>> {
-    if !matches!(decision, "allow" | "deny") {
+    if !matches!(decision, "allow" | "allow_tool" | "deny") {
         return Err(AppError::InvalidRequest(format!(
-            "unsupported MCP extension approval decision `{decision}`; expected allow or deny"
+            "unsupported MCP extension approval decision `{decision}`; expected allow, allow_tool or deny"
         )));
     }
     let now = Instant::now();
@@ -181,10 +288,28 @@ pub async fn respond_pending_approval(
             "MCP extension approval not found: {approval_id}"
         )));
     }
+    if decision == "allow_tool" && !eligible_for_tool_scope(&approval.public_tool) {
+        return Err(AppError::InvalidRequest(
+            "this sensitive MCP operation requires an exact one-shot approval".into(),
+        ));
+    }
     pending.remove(approval_id);
     drop(pending);
 
-    if decision == "allow" {
+    if decision == "allow_tool" {
+        let key = tool_approval_key(
+            &approval.principal_id,
+            &approval.public_tool,
+            approval.resource_scope.as_deref(),
+        );
+        tool_approvals().lock().await.insert(
+            key,
+            ScopedToolGrant {
+                expires_at: Instant::now() + APPROVAL_TTL,
+                remaining: MAX_TOOL_SCOPE_USES,
+            },
+        );
+    } else if decision == "allow" {
         let key = scoped_approval_key(
             &approval.principal_id,
             &approval.public_tool,
@@ -200,10 +325,11 @@ pub async fn respond_pending_approval(
         "approval_id": approval_id,
         "public_tool": approval.public_tool,
         "decision": decision,
-        "status": if decision == "allow" { "allowed" } else { "denied" },
-        "one_shot": true,
-        "expires_in_seconds": if decision == "allow" { APPROVAL_TTL.as_secs() } else { 0 },
-        "scope": "exact-principal-tool-arguments"
+        "status": if decision == "deny" { "denied" } else { "allowed" },
+        "one_shot": decision != "allow_tool",
+        "uses_remaining": if decision == "allow_tool" { MAX_TOOL_SCOPE_USES } else if decision == "allow" { 1 } else { 0 },
+        "expires_in_seconds": if decision != "deny" { APPROVAL_TTL.as_secs() } else { 0 },
+        "scope": if decision == "allow_tool" { "principal-tool-resource" } else { "exact-principal-tool-arguments" }
     })))
 }
 
@@ -367,6 +493,8 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
             matches!(
                 operation,
                 "apps_script_list_projects"
+                    | "apps_script_comment_preview"
+                    | "apps_script_comment_apply"
                     | "apps_script_get_project"
                     | "apps_script_get_content"
                     | "apps_script_update_content"
@@ -527,6 +655,29 @@ pub async fn bridge_call(
     arguments: serde_json::Map<String, serde_json::Value>,
     dispatcher: BridgeDispatcher,
 ) -> AppResult<CallToolResponse> {
+    bridge_call_inner(state, principal, public_tool, arguments, dispatcher, false).await
+}
+
+/// Internal only: called by the MCP transport after Harness consumed the
+/// corresponding current-run approval. No client-supplied bypass flag exists.
+pub(crate) async fn bridge_call_harness_approved(
+    state: &AppState,
+    principal: &Principal,
+    public_tool: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    dispatcher: BridgeDispatcher,
+) -> AppResult<CallToolResponse> {
+    bridge_call_inner(state, principal, public_tool, arguments, dispatcher, true).await
+}
+
+async fn bridge_call_inner(
+    state: &AppState,
+    principal: &Principal,
+    public_tool: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    dispatcher: BridgeDispatcher,
+    harness_approved: bool,
+) -> AppResult<CallToolResponse> {
     let Some(route) = resolve_route(&state.db, public_tool).await? else {
         return Ok(tool_error(format!(
             "MCP extension tool `{public_tool}` is not installed and enabled"
@@ -548,7 +699,7 @@ pub async fn bridge_call(
 
     let mut downstream = CallToolRequestParams::new(public_tool.to_owned());
     downstream.arguments = Some(arguments);
-    match try_call(state, principal, &downstream).await? {
+    match try_call_inner(state, principal, &downstream, harness_approved).await? {
         Some(response) => Ok(response),
         None => Ok(tool_error(format!(
             "MCP extension tool `{public_tool}` disappeared before dispatch"
@@ -561,6 +712,23 @@ pub async fn try_call(
     principal: &Principal,
     request: &CallToolRequestParams,
 ) -> AppResult<Option<CallToolResponse>> {
+    try_call_inner(state, principal, request, false).await
+}
+
+pub(crate) async fn try_call_harness_approved(
+    state: &AppState,
+    principal: &Principal,
+    request: &CallToolRequestParams,
+) -> AppResult<Option<CallToolResponse>> {
+    try_call_inner(state, principal, request, true).await
+}
+
+async fn try_call_inner(
+    state: &AppState,
+    principal: &Principal,
+    request: &CallToolRequestParams,
+    harness_approved: bool,
+) -> AppResult<Option<CallToolResponse>> {
     let Some(route) = resolve_route(&state.db, request.name.as_ref()).await? else {
         return Ok(None);
     };
@@ -572,6 +740,7 @@ pub async fn try_call(
         .and_then(serde_json::Value::as_str);
     let principal_id = crate::harness::principal_key(principal);
     let argument_sha256 = request_argument_sha256(request)?;
+    let resource_scope = request_resource_scope(request);
 
     if !principal_can_use(principal, &route.tool, workspace) {
         record_audit(
@@ -593,7 +762,16 @@ pub async fn try_call(
     }
 
     let user_approved = if route.tool.policy.approval == ApprovalMode::Ask {
-        consume_scoped_approval(&principal_id, &route.tool.public_name, &argument_sha256).await
+        harness_approved
+            || consume_scoped_approval(&principal_id, &route.tool.public_name, &argument_sha256)
+                .await
+            || (eligible_for_tool_scope(&route.tool.public_name)
+                && consume_tool_approval(
+                    &principal_id,
+                    &route.tool.public_name,
+                    resource_scope.as_deref(),
+                )
+                .await)
             || consume_approval(&route.tool.public_name).await
     } else {
         false
@@ -630,9 +808,13 @@ pub async fn try_call(
             )));
         }
         PolicyDecision::RequireApproval => {
-            let (approval_id, expires_in_seconds) =
-                request_pending_approval(&principal_id, &route.tool.public_name, &argument_sha256)
-                    .await;
+            let (approval_id, expires_in_seconds) = request_pending_approval(
+                &principal_id,
+                &route.tool.public_name,
+                &argument_sha256,
+                resource_scope.clone(),
+            )
+            .await;
             record_audit(
                 state,
                 principal,
@@ -1034,7 +1216,7 @@ fn approval_required_error(
     expires_in_seconds: u64,
 ) -> CallToolResponse {
     let message = format!(
-        "⚠️ APPROVAL REQUIRED: SourceNerve policy requires explicit approval before this MCP extension tool can run; approval_id={approval_id} public_tool=`{public_tool}` expires_in_seconds={expires_in_seconds}. Please prompt the user in the visible chat to allow or deny this action. Once allowed, call `harness_approval_respond` with approval_id `{approval_id}` and decision `allow`, then retry this action."
+        "⚠️ APPROVAL REQUIRED: SourceNerve policy requires explicit approval before this MCP extension tool can run; approval_id={approval_id} public_tool=`{public_tool}` expires_in_seconds={expires_in_seconds}. Prompt the user to allow this exact action, allow_tool for a limited set of repetitions (where eligible), or deny. Once allowed, call `harness_approval_respond` with approval_id `{approval_id}` and decision `allow`, then retry this action."
     );
     let mut result = CallToolResult::error(vec![ContentBlock::text(message)]);
     result.structured_content = Some(serde_json::json!({
@@ -1043,7 +1225,7 @@ fn approval_required_error(
         "public_tool": public_tool,
         "expires_in_seconds": expires_in_seconds,
         "requires_user_confirmation": true,
-        "retry": "After allow, retry only this exact tool call with the same arguments."
+        "retry": "After allow, retry this exact call. After explicit allow_tool, reuse only the same tool and resource within the limited grant."
     }));
     result.into()
 }
@@ -1247,15 +1429,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tool_scope_requires_explicit_decision_and_is_resource_bounded() {
+        let name = format!(
+            "google-workspace__apps_script_update_content_{}",
+            Uuid::new_v4()
+        );
+        let principal = "scoped-tool-principal";
+        let scope = Some("scriptId:hash-a".to_owned());
+        let (id, _) =
+            request_pending_approval(principal, &name, "hash-of-first-code", scope.clone()).await;
+        let response = respond_pending_approval(&id, "allow_tool", principal, false)
+            .await
+            .expect("allow scoped tool")
+            .expect("pending approval");
+        assert_eq!(response["one_shot"], false);
+        assert_eq!(response["uses_remaining"], MAX_TOOL_SCOPE_USES);
+        assert!(!consume_tool_approval(principal, &name, Some("scriptId:hash-b")).await);
+        assert!(!consume_tool_approval("other-user", &name, scope.as_deref()).await);
+        for _ in 0..MAX_TOOL_SCOPE_USES {
+            assert!(consume_tool_approval(principal, &name, scope.as_deref()).await);
+        }
+        assert!(!consume_tool_approval(principal, &name, scope.as_deref()).await);
+    }
+
+    #[tokio::test]
+    async fn sensitive_extension_tools_cannot_receive_tool_scope() {
+        let name = format!("files__delete_{}", Uuid::new_v4());
+        let (id, _) =
+            request_pending_approval("sensitive-principal", &name, "arguments", None).await;
+        assert!(
+            respond_pending_approval(&id, "allow_tool", "sensitive-principal", false)
+                .await
+                .is_err()
+        );
+        assert!(pending_approval_exists(&id).await);
+    }
+
+    #[tokio::test]
     async fn extension_approval_is_exact_reused_while_pending_and_one_shot_after_allow() {
         let public_tool = format!("desktop-control__test_{}", Uuid::new_v4());
         let principal_id = "approval-test-principal";
         let argument_sha256 = hex::encode(Sha256::digest(b"exact-arguments"));
 
         let (first_id, _) =
-            request_pending_approval(principal_id, &public_tool, &argument_sha256).await;
+            request_pending_approval(principal_id, &public_tool, &argument_sha256, None).await;
         let (second_id, _) =
-            request_pending_approval(principal_id, &public_tool, &argument_sha256).await;
+            request_pending_approval(principal_id, &public_tool, &argument_sha256, None).await;
         assert_eq!(first_id, second_id);
         assert!(pending_approval_exists(&first_id).await);
 

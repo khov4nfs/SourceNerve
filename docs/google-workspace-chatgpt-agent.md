@@ -12,6 +12,10 @@ Tài liệu triển khai bước tiếp theo sau PR #241 (Browser / Computer Use
 | Computer Use | SourceNerve Desktop Control | Ảnh màn hình và foreground fallback | Chỉ khi người dùng cho phép foreground interaction |
 | AppSheet REST API | REST API theo App ID | Bảng dữ liệu Add/Edit/Delete/Find, invoke Actions | Không cung cấp cách sửa toàn bộ cấu hình Editor qua API |
 
+## Sửa comment Apps Script bằng bản vá tối thiểu
+
+Nếu chỉ thêm một comment đơn dòng, dùng `google-workspace__apps_script_comment_preview` (đọc nội bộ Desktop, chỉ trả tên file và SHA-256) trước; sau khi người dùng xác nhận, dùng `google-workspace__apps_script_comment_apply` với `confirmed:true` và `expectedFingerprint`, **không** đưa toàn bộ source code 64 KB+ vào ChatGPT. Preview không cần Ask trên cấu hình mặc định; apply yêu cầu Ask một lần. Nếu host hoặc policy vẫn chặn, dừng, không dùng cách khác để lách chặn; người dùng thao tác trực tiếp tại SourceNerve Desktop → Google Workspace → Thêm một dòng comment. Xem `docs/google-workspace-comment-patch.md`.
+
 ## Liệt kê Apps Script projects (Drive metadata-only)
 
 Trong SourceNerve Desktop chọn **Google Workspace → Cấp quyền Drive metadata và ủy quyền lại**.

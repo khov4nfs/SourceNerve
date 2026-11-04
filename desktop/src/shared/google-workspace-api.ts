@@ -44,6 +44,70 @@ export interface AppsScriptUpdateInput {
   expectedFingerprint: string;
   confirmed: true;
 }
+export type AppsScriptEditOperation = "replace_exact" | "prepend" | "append";
+export interface AppsScriptTextEdit {
+  fileName: string;
+  operation: AppsScriptEditOperation;
+  findText?: string;
+  text: string;
+}
+export interface AppsScriptPatchPreviewInput {
+  scriptId: string;
+  edits: AppsScriptTextEdit[];
+}
+export interface AppsScriptPatchPreview {
+  scriptId: string;
+  expectedFingerprint: string;
+  expectedPatchedFingerprint: string;
+  planFingerprint: string;
+  editCount: number;
+  changedFiles: string[];
+  fileCount: number;
+  manifestPreserved: true;
+  wouldChange: boolean;
+}
+export interface AppsScriptPatchApplyInput extends AppsScriptPatchPreviewInput {
+  expectedFingerprint: string;
+  expectedPatchedFingerprint: string;
+  planFingerprint: string;
+  confirmed: true;
+}
+export interface AppsScriptPatchApplyResult {
+  scriptId: string;
+  previousFingerprint: string;
+  newFingerprint: string;
+  changedFiles: string[];
+  changed: boolean;
+  verified: true;
+}
+export interface AppsScriptCommentPatchInput {
+  scriptId: string;
+  commentLine: string;
+  fileName?: string;
+}
+export interface AppsScriptCommentPreview {
+  scriptId: string;
+  fileName: string;
+  commentLine: string;
+  expectedFingerprint: string;
+  position: "file-start";
+  wouldChange: boolean;
+  fileCount: number;
+  manifestPreserved: true;
+}
+export interface AppsScriptCommentApplyInput extends AppsScriptCommentPatchInput {
+  fileName: string;
+  expectedFingerprint: string;
+  confirmed: true;
+}
+export interface AppsScriptCommentApplyResult {
+  scriptId: string;
+  fileName: string;
+  previousFingerprint: string;
+  newFingerprint: string;
+  changed: boolean;
+  verified: true;
+}
 export interface AppSheetKeyInput {
   appId: string;
   region: string;
@@ -59,6 +123,10 @@ export interface GoogleWorkspaceApi {
   scriptProject(scriptId: string): Promise<DesktopResult<Record<string, unknown>>>;
   scriptContent(scriptId: string): Promise<DesktopResult<AppsScriptContent>>;
   updateScript(input: AppsScriptUpdateInput): Promise<DesktopResult<AppsScriptContent>>;
+  previewScriptPatch(input: AppsScriptPatchPreviewInput): Promise<DesktopResult<AppsScriptPatchPreview>>;
+  applyScriptPatch(input: AppsScriptPatchApplyInput): Promise<DesktopResult<AppsScriptPatchApplyResult>>;
+  previewScriptComment(input: AppsScriptCommentPatchInput): Promise<DesktopResult<AppsScriptCommentPreview>>;
+  applyScriptComment(input: AppsScriptCommentApplyInput): Promise<DesktopResult<AppsScriptCommentApplyResult>>;
   createVersion(scriptId: string, description: string, confirmed: true): Promise<DesktopResult<Record<string, unknown>>>;
   createDeployment(scriptId: string, versionNumber: number, description: string, confirmed: true): Promise<DesktopResult<Record<string, unknown>>>;
   appSheetKeyStatus(appId: string, region: string): Promise<DesktopResult<AppSheetAppStatus>>;
@@ -76,6 +144,10 @@ export const GOOGLE_WORKSPACE_IPC = {
   scriptProject: "desktop:google-workspace-script-project",
   scriptContent: "desktop:google-workspace-script-content",
   updateScript: "desktop:google-workspace-script-update",
+  previewScriptPatch: "desktop:google-workspace-patch-preview",
+  applyScriptPatch: "desktop:google-workspace-patch-apply",
+  previewScriptComment: "desktop:google-workspace-comment-preview",
+  applyScriptComment: "desktop:google-workspace-comment-apply",
   createVersion: "desktop:google-workspace-script-version",
   createDeployment: "desktop:google-workspace-script-deployment",
   appSheetKeyStatus: "desktop:google-workspace-appsheet-status",

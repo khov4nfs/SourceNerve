@@ -1912,6 +1912,133 @@ async fn tool_pipeline_stops_ask_and_deny_before_dispatch() {
 }
 
 #[tokio::test]
+async fn explicit_run_scoped_grant_allows_bounded_changes_but_not_other_tools() {
+    let (_root, _repo, _state_dir, state) = fixture().await;
+    let begun = harness::begin(
+        &state,
+        begin_request("harness:scoped-approval"),
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("begin scoped run");
+    observe_context(&state, &begun.snapshot.run.id).await;
+    let request = tool_request(
+        "git_commit",
+        serde_json::json!({
+            "workspace": "harness",
+            "message": "initial",
+            "_harness_run_id": begun.snapshot.run.id,
+        }),
+    );
+    harness_tool_pipeline::begin(&state, &Principal::Operator, &request)
+        .await
+        .expect_err("initial action requires explicit approval");
+    let pending = harness_approval::list(
+        &state,
+        harness_approval::HarnessApprovalListRequest {
+            run_id: begun.snapshot.run.id.clone(),
+            status: Some("pending".into()),
+            limit: 10,
+        },
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("list scoped approval");
+    let original = &pending.approvals[0];
+    let response = harness_approval::respond(
+        &state,
+        harness_approval::HarnessApprovalRespondRequest {
+            approval_id: original.id.clone(),
+            decision: "allow_run".into(),
+        },
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("explicitly approve this tool in the run");
+    assert_eq!(response.approval.approval_scope, "run");
+    assert_eq!(response.approval.uses_remaining, 12);
+
+    for index in 0..12 {
+        let changed = tool_request(
+            "git_commit",
+            serde_json::json!({
+                "workspace": "harness",
+                "message": format!("step-{index}"),
+                "_harness_run_id": begun.snapshot.run.id,
+            }),
+        );
+        let ticket = harness_tool_pipeline::begin(&state, &Principal::Operator, &changed)
+            .await
+            .expect("scoped approval permits changed arguments for same tool");
+        ticket
+            .finish(&state, true, None)
+            .await
+            .expect("finish step");
+    }
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT uses_remaining FROM harness_approvals WHERE id=?1")
+            .bind(&original.id)
+            .fetch_one(&state.db)
+            .await
+            .expect("read remaining");
+    assert_eq!(remaining, 0);
+    let exhausted = harness_tool_pipeline::begin(&state, &Principal::Operator, &request)
+        .await
+        .expect_err("grant cannot be used a thirteenth time");
+    assert!(exhausted.to_string().contains("approval required"));
+}
+
+#[tokio::test]
+async fn run_scope_never_authorizes_privileged_exec_or_irreversible_git() {
+    let (_root, _repo, _state_dir, state) = fixture().await;
+    let begun = harness::begin(
+        &state,
+        begin_request("harness:scoped-danger"),
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("begin");
+    for tool in ["workspace_exec", "git_push", "github_pull_merge"] {
+        let (approval, _) = harness_approval::request_pending(
+            &state,
+            &harness_approval::ApprovalIntent {
+                run_id: begun.snapshot.run.id.clone(),
+                principal_id: harness::operator_principal_key().into(),
+                workspace: "harness".into(),
+                tool: tool.into(),
+                capability_id: if tool == "workspace_exec" {
+                    "core.workspace.exec".into()
+                } else {
+                    "core.git.mutate".into()
+                },
+                argument_sha256: "a".repeat(64),
+                head_sha: begun.snapshot.run.base_head.clone(),
+            },
+            None,
+            None,
+        )
+        .await
+        .expect("request");
+        let error = harness_approval::respond(
+            &state,
+            harness_approval::HarnessApprovalRespondRequest {
+                approval_id: approval.id,
+                decision: "allow_run".into(),
+            },
+            harness::operator_principal_key(),
+            true,
+        )
+        .await
+        .expect_err("privileged actions require exact consent");
+        assert!(error.to_string().contains("exact allow"), "{tool}");
+    }
+}
+
+#[tokio::test]
 async fn approval_is_exact_one_shot_and_changed_arguments_need_new_request() {
     let (_root, _repo, _state_dir, state) = fixture().await;
     let begun = harness::begin(
