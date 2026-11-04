@@ -78,6 +78,7 @@ pub struct ExecutionTicket {
     effective_sandbox: Option<String>,
     gui_session_approved: bool,
     danger_full_access_approved: bool,
+    harness_approval_consumed: bool,
     closed_loop_role: harness::HarnessLoopToolRole,
     requires_verification: bool,
     proof_type: Option<String>,
@@ -1557,6 +1558,7 @@ pub async fn begin(
         effective_sandbox,
         gui_session_approved,
         danger_full_access_approved,
+        harness_approval_consumed: approval_id.is_some(),
         closed_loop_role,
         requires_verification,
         proof_type: proof_observation
@@ -1589,6 +1591,12 @@ impl ExecutionTicket {
 
     pub fn danger_full_access_approved(&self) -> bool {
         self.danger_full_access_approved
+    }
+
+    /// Provenance from a consumed, current, exact or explicitly scoped Harness approval.
+    /// Only the trusted MCP transport may use it to avoid a second gateway prompt.
+    pub fn harness_approval_consumed(&self) -> bool {
+        self.harness_approval_consumed
     }
 
     pub fn context_note(&self) -> Option<&str> {
@@ -2147,6 +2155,7 @@ mod tests {
             effective_sandbox: Some("workspace-write".to_string()),
             gui_session_approved: false,
             danger_full_access_approved: false,
+            harness_approval_consumed: false,
             closed_loop_role: harness::HarnessLoopToolRole::Ignore,
             requires_verification: false,
             proof_type: None,
@@ -2177,6 +2186,7 @@ mod tests {
             effective_sandbox: Some("danger-full-access".to_string()),
             gui_session_approved: false,
             danger_full_access_approved: true,
+            harness_approval_consumed: false,
             closed_loop_role: harness::HarnessLoopToolRole::Ignore,
             requires_verification: false,
             proof_type: None,
