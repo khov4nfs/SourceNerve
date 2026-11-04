@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 
 import type { DesktopBootstrapState } from "./bootstrap";
 import type { DaemonLaunchPlan } from "./daemon-manager";
@@ -15,13 +15,25 @@ export async function existingDaemonLaunchPlan(
   const managedWorkspaces = await loadWorkspaceRegistry(bootstrap.paths.workspaceRegistryPath);
   if (managedWorkspaces !== null) {
     if (managedWorkspaces.length === 0) return null;
-    const credentials = await runtimeCredentials(bootstrap, managedWorkspaces);
+    const validWorkspaces: ManagedWorkspace[] = [];
+    for (const workspace of managedWorkspaces) {
+      try {
+        const stats = await stat(workspace.root);
+        if (stats.isDirectory()) {
+          validWorkspaces.push(workspace);
+        }
+      } catch {
+        // Workspace directory is missing or inaccessible on disk
+      }
+    }
+    if (validWorkspaces.length === 0) return null;
+    const credentials = await runtimeCredentials(bootstrap, validWorkspaces);
     const runtime = await materializeRuntime({
       productProfile: bootstrap.profile,
       configPath: bootstrap.paths.configPath,
       stateDirectory: await resolveManagedStateDirectory(bootstrap),
       localBearer: credentials.localBearer,
-      workspaces: managedWorkspaces,
+      workspaces: validWorkspaces,
       githubToken: credentials.githubToken,
       gitlabToken: credentials.gitlabToken,
     });

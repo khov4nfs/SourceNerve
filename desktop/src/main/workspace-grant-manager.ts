@@ -36,7 +36,8 @@ export class WorkspaceGrantManager {
   workspaceChanged(): Promise<void> {
     return this.enqueueMutation(async () => {
       const views = await this.workspaceManager.listManagedWorkspaces();
-      await this.applyRuntime(views.map(toManagedWorkspace));
+      const validViews = views.filter((view) => view.validation.state !== "invalid");
+      await this.applyRuntime(validViews.map(toManagedWorkspace));
     });
   }
 

@@ -8,6 +8,7 @@ import { Panel } from "./components/Panel";
 import { ProviderWorkflowScreen } from "./components/ProviderWorkflowScreen";
 import { SettingsModal } from "./components/SettingsModal";
 import { ActionButton } from "./components/atoms/ActionButton";
+import { InlineNotice } from "./components/molecules/InlineNotice";
 import { DesktopShell } from "./components/templates/DesktopShell";
 import {
   DEFAULT_ONBOARDING_PROGRESS,
@@ -51,6 +52,7 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>(() => settingsSectionForRoute(routeFromHash(window.location.hash)) ?? "general");
   const [codexSetup, setCodexSetup] = useState<DesktopHarnessCodexSetupView | null>(null);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [onboardingRuntimeSignals, setOnboardingRuntimeSignals] = useState<OnboardingSignals>(() => emptyOnboardingSignals());
   const [onboardingProgress, setOnboardingProgress] = useState<OnboardingUiProgress>(loadOnboardingProgress);
   const [showOnboarding, setShowOnboarding] = useState(true);
@@ -220,10 +222,13 @@ export function App() {
 
   async function addWorkspace(): Promise<void> {
     setOnboardingError(null);
+    setAppError(null);
     try {
       const picked = await window.sourcenerveDesktop.pickWorkspaceRepository();
       if (!picked.ok) {
-        setOnboardingError(`Workspace: ${picked.error.message}`);
+        const message = `Workspace: ${picked.error.message}`;
+        setOnboardingError(message);
+        setAppError(message);
         return;
       }
       if (!picked.value) return;
@@ -238,7 +243,9 @@ export function App() {
         defaultBranch: selection.defaultBranch,
       });
       if (!saved.ok) {
-        setOnboardingError(`Workspace: ${saved.error.message}`);
+        const message = `Workspace: ${saved.error.message}`;
+        setOnboardingError(message);
+        setAppError(message);
         return;
       }
       await refreshRuntimeState();
@@ -247,7 +254,9 @@ export function App() {
         openRoute("harness");
       }
     } catch (actionError) {
-      setOnboardingError(actionError instanceof Error ? actionError.message : "Failed to add workspace.");
+      const message = actionError instanceof Error ? actionError.message : "Failed to add workspace.";
+      setOnboardingError(message);
+      setAppError(message);
     }
   }
 
@@ -333,6 +342,19 @@ export function App() {
         />
       ) : (
         <>
+          {appError ? (
+            <div className="mb-4">
+              <InlineNotice
+                tone="danger"
+                title="Could not add workspace"
+                action={
+                  <ActionButton onClick={() => setAppError(null)}>Dismiss</ActionButton>
+                }
+              >
+                {appError}
+              </InlineNotice>
+            </div>
+          ) : null}
           {showContinueSetup ? (
             <div className="mb-4 flex justify-end">
               <ActionButton onClick={() => setShowOnboarding(true)}>Continue setup</ActionButton>
