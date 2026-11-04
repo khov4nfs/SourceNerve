@@ -12,6 +12,10 @@ const DISCOVERY_KEY = "google-workspace:project-discovery-enabled";
 const DRIVE_METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
 const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
 const SCRIPT_MIME_TYPE = "application/vnd.google-apps.script";
+const CONTAINER_MIME_TYPES = {
+  "application/vnd.google-apps.spreadsheet": "sheet",
+  "application/vnd.google-apps.document": "doc",
+} as const;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 const APP_SCRIPT_BASE = "https://script.googleapis.com/v1/projects";
@@ -50,6 +54,30 @@ export interface AppsScriptProjectList {
   projects: AppsScriptProjectSummary[];
   nextPageToken: string | null;
   incompleteSearch: boolean;
+}
+/** Drive can discover containers, not their invisible bound Apps Script IDs. */
+export interface AppsScriptContainerListInput extends AppsScriptProjectListInput {
+  query?: string;
+}
+export interface AppsScriptContainerSummary {
+  containerId: string;
+  name: string;
+  kind: "sheet" | "doc";
+  modifiedTime: string | null;
+  editorUrl: string;
+}
+export interface AppsScriptContainerList {
+  containers: AppsScriptContainerSummary[];
+  nextPageToken: string | null;
+  incompleteSearch: boolean;
+  scriptsEnumerated: false;
+}
+export interface AppsScriptBoundCheck {
+  scriptId: string;
+  containerId: string;
+  scriptTitle: string | null;
+  editorUrl: string;
+  match: "verified" | "mismatch" | "unconfirmed";
 }
 export interface AppsScriptFile {
   name: string;
@@ -325,6 +353,92 @@ export class GoogleWorkspaceManager {
       })),
       nextPageToken: data.nextPageToken ?? null,
       incompleteSearch: data.incompleteSearch === true,
+    };
+  }
+
+  /**
+   * Enumerate possible parent Sheets/Docs from Drive metadata. This DOES NOT
+   * imply a document contains a bound script: Google does not expose a
+   * reverse listing of container-bound script IDs. No content is fetched.
+   */
+  async listAppsScriptContainers(input: AppsScriptContainerListInput = {}): Promise<AppsScriptContainerList> {
+    const { pageSize = DEFAULT_PAGE_SIZE, pageToken, query } = input;
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
+      throw new Error("Apps Script pageSize must be an integer from 1 to 100");
+    }
+    if (pageToken !== undefined && !validPageToken(pageToken)) {
+      throw new Error("Invalid Apps Script pagination token");
+    }
+    if (query !== undefined && (!boundedLabel(query, 1, 128) || !query.trim())) {
+      throw new Error("Invalid container search query");
+    }
+    if (!(await this.googleStatus()).projectDiscoveryEnabled) {
+      throw new Error("Google Drive metadata access is not enabled; enable project discovery and authorize again");
+    }
+    const token = await this.oauth.accessTokenForTrustedRequest(GOOGLE_CONNECTION_ID);
+    const url = new URL(DRIVE_FILES_URL);
+    const parts = Object.keys(CONTAINER_MIME_TYPES).map((mime) => `mimeType = '${mime}'`);
+    const nameClause = query
+      ? ` and name contains '${query.trim().replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
+      : "";
+    url.searchParams.set("q", `(${parts.join(" or ")}) and trashed = false${nameClause}`);
+    url.searchParams.set("fields", "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)");
+    url.searchParams.set("pageSize", String(pageSize));
+    url.searchParams.set("orderBy", "modifiedTime desc");
+    url.searchParams.set("spaces", "drive");
+    url.searchParams.set("corpora", "user");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response = await this.fetcher(url.toString(), {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const payload = await safeJsonResponse(response, MAX_RESPONSE_BYTES, "Google Drive");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("Google Drive returned malformed container list");
+    }
+    const data = payload as Record<string, unknown>;
+    if (!Array.isArray(data.files) || data.files.length > pageSize || !data.files.every(validDriveContainer)) {
+      throw new Error("Google Drive returned invalid container metadata");
+    }
+    if (data.nextPageToken !== undefined && !validPageToken(data.nextPageToken)) {
+      throw new Error("Google Drive returned an invalid next-page token");
+    }
+    return {
+      containers: (data.files as DriveContainerMetadata[]).map((file) => ({
+        containerId: file.id,
+        name: file.name,
+        kind: CONTAINER_MIME_TYPES[file.mimeType],
+        modifiedTime: file.modifiedTime ?? null,
+        editorUrl: file.mimeType === "application/vnd.google-apps.spreadsheet"
+          ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(file.id)}/edit`
+          : `https://docs.google.com/document/d/${encodeURIComponent(file.id)}/edit`,
+      })),
+      nextPageToken: data.nextPageToken ?? null,
+      incompleteSearch: data.incompleteSearch === true,
+      scriptsEnumerated: false,
+    };
+  }
+
+  /**
+   * Check a user-provided Script ID against a selected container. Some Google
+   * projects.get responses omit parentId: report unconfirmed, never infer a
+   * match from a title, owner, or Drive search result.
+   */
+  async checkBoundAppsScript(scriptId: string, containerId: string): Promise<AppsScriptBoundCheck> {
+    scriptPath(scriptId);
+    if (!validDriveId(containerId)) throw new Error("Invalid Google Sheets/Docs container ID");
+    const project = await this.getAppsScriptProject(scriptId);
+    if (project.scriptId !== scriptId) throw new Error("Apps Script returned a different project ID");
+    const parent = project.parentId;
+    return {
+      scriptId,
+      containerId,
+      scriptTitle: typeof project.title === "string" ? project.title : null,
+      editorUrl: `https://script.google.com/d/${encodeURIComponent(scriptId)}/edit`,
+      match: parent === containerId ? "verified" :
+        (typeof parent === "string" && validDriveId(parent) ? "mismatch" : "unconfirmed"),
     };
   }
 
@@ -776,6 +890,25 @@ interface DriveScriptMetadata {
   name: string;
   mimeType: typeof SCRIPT_MIME_TYPE;
   modifiedTime?: string;
+}
+interface DriveContainerMetadata {
+  id: string;
+  name: string;
+  mimeType: keyof typeof CONTAINER_MIME_TYPES;
+  modifiedTime?: string;
+}
+function validDriveId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{12,160}$/.test(value);
+}
+function validDriveContainer(value: unknown): value is DriveContainerMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const file = value as Record<string, unknown>;
+  return validDriveId(file.id) &&
+    typeof file.name === "string" && file.name.length > 0 && file.name.length <= 512 &&
+    typeof file.mimeType === "string" &&
+    Object.prototype.hasOwnProperty.call(CONTAINER_MIME_TYPES, file.mimeType) &&
+    (file.modifiedTime === undefined || (typeof file.modifiedTime === "string" &&
+      !Number.isNaN(Date.parse(file.modifiedTime)) && file.modifiedTime.length <= 64));
 }
 function validPageToken(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 4096 &&

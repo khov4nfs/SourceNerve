@@ -64,10 +64,10 @@ pub fn complete_known_browser_classification(
         | "get_network_request"
         | "take_screenshot"
         | "take_snapshot"
-        | "take_heapsnapshot"
         | "wait_for"
         | "performance_analyze_insight" => true,
         "click"
+        | "take_heapsnapshot" // requires filePath, so never classify as observation
         | "close_page"
         | "drag"
         | "emulate"
@@ -89,13 +89,15 @@ pub fn complete_known_browser_classification(
         _ => return hint,
     };
 
-    // Conflicting downstream hints must never turn an interactive browser
-    // operation into a read-only tool.
-    let read_only = read && hint.read_only != Some(false) && hint.destructive != Some(true);
+    // Only the audited, exact Chrome DevTools observation names above can
+    // override stale downstream inference (e.g. `take_snapshot` being labeled
+    // "write" merely because its name starts with "take"). Interactive tools
+    // remain write even if a provider advertises readOnlyHint=true. This is a
+    // dispatch classification, NOT a policy/approval bypass.
     ToolClassification {
-        read_only: Some(read_only),
-        destructive: Some(!read_only),
-        idempotent: Some(read_only && hint.idempotent != Some(false)),
+        read_only: Some(read),
+        destructive: Some(!read),
+        idempotent: Some(read),
         open_world: Some(true),
     }
 }
@@ -107,7 +109,8 @@ pub fn complete_known_browser_classification(
 /// otherwise be routed through the conservative write dispatcher.
 ///
 /// Only trust the reserved built-in extension identity and exact known public
-/// tool names. A downstream conflicting write/destructive annotation wins.
+/// tool names. A stale name-inferred write annotation is corrected for these
+/// audited read operations; explicit per-tool approval policy remains intact.
 pub fn complete_known_google_workspace_classification(
     extension_id: &str,
     public_name: &str,
@@ -119,6 +122,8 @@ pub fn complete_known_google_workspace_classification(
     if !matches!(
         public_name,
         "google-workspace__apps_script_list_projects"
+            | "google-workspace__apps_script_list_containers"
+            | "google-workspace__apps_script_check_bound"
             | "google-workspace__apps_script_patch_preview"
             | "google-workspace__apps_script_comment_preview"
             | "google-workspace__apps_script_get_project"
@@ -126,16 +131,18 @@ pub fn complete_known_google_workspace_classification(
             | "google-workspace__appsheet_find_rows"
             | "google-workspace__appsheet_key_status"
             | "google-workspace__google_workspace_status"
-    ) || hint.read_only == Some(false)
-        || hint.destructive == Some(true)
-    {
+    ) {
         return hint;
     }
 
+    // These exact, built-in Google Workspace operations are independently
+    // audited as read-only, including the two preview tools that contain the
+    // token "patch". A stale name-based "write" inference must not force
+    // approval for previews. All other operations retain their policy.
     ToolClassification {
         read_only: Some(true),
         destructive: Some(false),
-        idempotent: Some(hint.idempotent != Some(false)),
+        idempotent: Some(true),
         open_world: Some(true),
     }
 }
@@ -485,7 +492,6 @@ mod tests {
             "get_network_request",
             "take_screenshot",
             "take_snapshot",
-            "take_heapsnapshot",
             "wait_for",
         ] {
             let public_name = format!("chrome-devtools-mcp-6f0fffa__{name}");
@@ -494,6 +500,12 @@ mod tests {
             assert_eq!(resolved.read_only, Some(true), "{name}");
             assert_eq!(resolved.destructive, Some(false), "{name}");
         }
+        let heap = complete_known_browser_classification(
+            "chrome-devtools-mcp-6f0fffa__take_heapsnapshot",
+            ToolClassification::default(),
+        );
+        assert_eq!(heap.read_only, Some(false));
+        assert_eq!(heap.destructive, Some(true));
         let conflict = complete_known_browser_classification(
             "chrome-devtools-mcp-6f0fffa__take_screenshot",
             ToolClassification {
@@ -503,13 +515,17 @@ mod tests {
                 open_world: None,
             },
         );
-        assert_eq!(conflict.read_only, Some(false));
+        // Exact audited observation semantics override stale provider hints.
+        assert_eq!(conflict.read_only, Some(true));
+        assert_eq!(conflict.destructive, Some(false));
     }
 
     #[test]
     fn first_party_google_workspace_reads_use_read_dispatcher() {
         for public_name in [
             "google-workspace__apps_script_list_projects",
+            "google-workspace__apps_script_list_containers",
+            "google-workspace__apps_script_check_bound",
             "google-workspace__apps_script_patch_preview",
             "google-workspace__apps_script_comment_preview",
             "google-workspace__apps_script_get_project",
@@ -573,14 +589,13 @@ mod tests {
                 ..hint
             },
         ] {
-            assert_eq!(
-                complete_known_google_workspace_classification(
-                    "sourcenerve-google-workspace",
-                    "google-workspace__apps_script_list_projects",
-                    conflicting,
-                ),
-                conflicting
+            let corrected = complete_known_google_workspace_classification(
+                "sourcenerve-google-workspace",
+                "google-workspace__apps_script_patch_preview",
+                conflicting,
             );
+            assert_eq!(corrected.read_only, Some(true));
+            assert_eq!(corrected.destructive, Some(false));
         }
     }
 

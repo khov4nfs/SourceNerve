@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 import type {
   AppsScriptProjectSummary,
+  AppsScriptContainerSummary,
+  AppsScriptBoundCheck,
   AppsScriptCommentPreview,
   AppsScriptPatchPreview,
   AppsScriptTextEdit,
@@ -29,6 +31,11 @@ export function GoogleWorkspacePanel() {
   const [projects, setProjects] = useState<AppsScriptProjectSummary[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [incompleteSearch, setIncompleteSearch] = useState(false);
+  const [containerQuery, setContainerQuery] = useState("");
+  const [containers, setContainers] = useState<AppsScriptContainerSummary[]>([]);
+  const [containerNextPageToken, setContainerNextPageToken] = useState<string | null>(null);
+  const [containerId, setContainerId] = useState("");
+  const [boundCheck, setBoundCheck] = useState<AppsScriptBoundCheck | null>(null);
   const [scriptSummary, setScriptSummary] = useState("");
   const [patchFileName, setPatchFileName] = useState("");
   const [patchOperation, setPatchOperation] = useState<AppsScriptEditOperation>("replace_exact");
@@ -85,6 +92,20 @@ export function GoogleWorkspacePanel() {
     setMessage(pageToken ? "Đã tải thêm một trang Apps Script." : "Đã đọc danh sách Apps Script từ Google Drive metadata.");
   }
 
+  async function fetchContainers(pageToken?: string) {
+    const result = await api.listContainers({
+      pageSize: 30,
+      ...(pageToken ? { pageToken } : {}),
+      ...(containerQuery.trim() ? { query: containerQuery.trim() } : {}),
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    setContainers((previous) => pageToken
+      ? [...previous, ...result.value.containers] : result.value.containers);
+    setContainerNextPageToken(result.value.nextPageToken);
+    setBoundCheck(null);
+    setMessage(`Tìm thấy ${result.value.containers.length} tài liệu nguồn ứng viên trên trang này; chưa xác định tài liệu nào có Apps Script.`);
+  }
+
   return (
     <Panel title="Google Workspace" eyebrow="OAuth Apps Script · AppSheet API key">
       <div className="space-y-4">
@@ -126,6 +147,10 @@ export function GoogleWorkspacePanel() {
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
                 setProjects([]);
+                setContainers([]);
+                setContainerNextPageToken(null);
+                setContainerId("");
+                setBoundCheck(null);
                 setNextPageToken(null);
                 setCommentPreview(null);
                 setPatchPreview(null);
@@ -142,6 +167,10 @@ export function GoogleWorkspacePanel() {
                 // The next OAuth consent may select a different Google account.
                 // Never keep showing project metadata from the prior identity.
                 setProjects([]);
+                setContainers([]);
+                setContainerNextPageToken(null);
+                setContainerId("");
+                setBoundCheck(null);
                 setNextPageToken(null);
                 setScriptSummary("");
                 setCommentPreview(null);
@@ -156,6 +185,10 @@ export function GoogleWorkspacePanel() {
                 setStatus(response.value);
                 setScriptSummary("");
                 setProjects([]);
+                setContainers([]);
+                setContainerNextPageToken(null);
+                setContainerId("");
+                setBoundCheck(null);
                 setNextPageToken(null);
                 setCommentPreview(null);
                 setPatchPreview(null);
@@ -182,6 +215,10 @@ export function GoogleWorkspacePanel() {
                   if (!enabled.ok) throw new Error(enabled.error.message);
                   setStatus(enabled.value);
                   setProjects([]);
+                  setContainers([]);
+                  setContainerNextPageToken(null);
+                  setContainerId("");
+                  setBoundCheck(null);
                   setNextPageToken(null);
                   const connected = await api.connect();
                   if (!connected.ok) throw new Error(connected.error.message);
@@ -223,12 +260,82 @@ export function GoogleWorkspacePanel() {
                 })}>Tải thêm</ActionButton>
             )}
           </div>
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Tìm Apps Script gắn với Google Sheets/Docs</p>
+            <p className="text-xs text-muted-foreground">
+              Google không cung cấp API liệt kê Script ID gắn với tài liệu. Hãy tìm Sheet/Doc nguồn
+              bằng Drive metadata, mở tài liệu và chọn Extensions → Apps Script → Project Settings
+              để sao chép Script ID, sau đó đối chiếu bằng API bên dưới.
+              Danh sách tài liệu nguồn không khẳng định có Apps Script.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Tìm tên tài liệu nguồn (tùy chọn)</span>
+              <input aria-label="Search bound script container" className={fieldClass}
+                value={containerQuery} maxLength={128}
+                onChange={(event) => { setContainerQuery(event.target.value); setContainerNextPageToken(null); }}
+                placeholder="Tên Google Sheet hoặc Doc" />
+            </label>
+            <ActionButton size="sm" variant="secondary"
+              disabled={Boolean(busy) || !status?.connected || !status.projectDiscoveryEnabled}
+              onClick={() => void perform("containers-list", async () => { await fetchContainers(); })}>
+              Tìm Sheets/Docs ứng viên
+            </ActionButton>
+            {containers.length > 0 && (
+              <ul className="space-y-2">
+                {containers.map((container) => (
+                  <li className="rounded border border-border p-2 space-y-1" key={container.containerId}>
+                    <a className="text-sm underline break-words" href={container.editorUrl}
+                      target="_blank" rel="noopener noreferrer">{container.name}</a>
+                    <p className="text-xs text-muted-foreground">
+                      {container.kind === "sheet" ? "Google Sheets" : "Google Docs"} · {container.modifiedTime ?? "Không rõ thời gian sửa"}
+                    </p>
+                    <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
+                      onClick={() => { setContainerId(container.containerId); setBoundCheck(null); }}>
+                      {containerId === container.containerId ? "Đã chọn tài liệu nguồn" : "Chọn tài liệu nguồn"}
+                    </ActionButton>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {containerNextPageToken && (
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
+                onClick={() => void perform("containers-more", async () => {
+                  await fetchContainers(containerNextPageToken);
+                })}>Tải thêm Sheets/Docs</ActionButton>
+            )}
+            {containerId && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground break-all">Container ID: {containerId}</p>
+                <ActionButton size="sm" variant="secondary"
+                  disabled={Boolean(busy) || !status?.connected || !scriptId.trim()}
+                  onClick={() => void perform("bound-check", async () => {
+                    const result = await api.checkBoundScript(scriptId.trim(), containerId);
+                    if (!result.ok) throw new Error(result.error.message);
+                    setBoundCheck(result.value);
+                    setMessage(result.value.match === "verified"
+                      ? "Google xác nhận Script ID gắn với tài liệu đã chọn."
+                      : result.value.match === "mismatch"
+                        ? "Script ID thuộc một container khác."
+                        : "Google chưa trả parentId. Không thể xác minh liên kết chỉ bằng API.");
+                  })}>Đối chiếu Script ID với tài liệu đã chọn</ActionButton>
+              </div>
+            )}
+            {boundCheck && (
+              <p className="text-xs text-muted-foreground">
+                {boundCheck.scriptTitle ?? "Apps Script"} · {
+                  boundCheck.match === "verified" ? "Đã xác minh" :
+                  boundCheck.match === "mismatch" ? "Không khớp" : "Chưa xác minh"
+                }
+              </p>
+            )}
+          </div>
           <label className="block text-xs space-y-1">
             <span>Apps Script ID (project được bạn chọn)</span>
             <input aria-label="Apps Script ID" className={fieldClass} value={scriptId}
               placeholder="Script ID" onChange={(event) => {
                 setScriptId(event.target.value);
                 setCommentPreview(null);
+                setBoundCheck(null);
               }} />
           </label>
           <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || !status?.connected || !scriptId}

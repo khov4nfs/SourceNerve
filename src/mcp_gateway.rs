@@ -733,6 +733,30 @@ async fn try_call_inner(
         return Ok(None);
     };
     let started = Instant::now();
+
+    // A Chrome observation is read-only only when it returns data inline.
+    // take_snapshot/take_screenshot accept filePath and can write arbitrary
+    // output files; deny this form even through a direct namespaced MCP call.
+    if browser_observation_requests_file_output(&route.tool.public_name, request.arguments.as_ref())
+    {
+        record_audit(
+            state,
+            principal,
+            None,
+            &route,
+            AuditPolicyDecision::Blocked,
+            AuditApprovalDecision::NotApplicable,
+            AuditResultCategory::Denied,
+            started,
+            None,
+            None,
+        )
+        .await;
+        return Ok(Some(tool_error(
+            "Chrome observation filePath is not permitted through the read bridge; omit filePath for an inline snapshot",
+        )));
+    }
+
     let workspace = request
         .arguments
         .as_ref()
@@ -1182,6 +1206,18 @@ fn public_tool(tool: &ExtensionToolRecord) -> AppResult<Tool> {
     Ok(result)
 }
 
+fn browser_observation_requests_file_output(
+    public_tool: &str,
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> bool {
+    let Some((namespace, operation)) = public_tool.rsplit_once("__") else {
+        return false;
+    };
+    namespace.starts_with("chrome-devtools-mcp-")
+        && matches!(operation, "take_snapshot" | "take_screenshot")
+        && arguments.is_some_and(|args| args.contains_key("filePath"))
+}
+
 fn effective_extension_classification(
     tool: &ExtensionToolRecord,
 ) -> crate::mcp_extension_policy::ToolClassification {
@@ -1372,6 +1408,30 @@ mod tests {
             effective_extension_classification(&script).read_only,
             Some(true)
         );
+    }
+
+    #[test]
+    fn browser_observation_refuses_filesystem_output_even_on_direct_dispatch() {
+        let mut args = serde_json::Map::new();
+        assert!(!browser_observation_requests_file_output(
+            "chrome-devtools-mcp-6f0fffa__take_snapshot",
+            Some(&args)
+        ));
+        args.insert("filePath".into(), serde_json::json!("/tmp/snapshot.txt"));
+        for tool in ["take_snapshot", "take_screenshot"] {
+            assert!(browser_observation_requests_file_output(
+                &format!("chrome-devtools-mcp-6f0fffa__{tool}"),
+                Some(&args),
+            ));
+        }
+        assert!(!browser_observation_requests_file_output(
+            "another-extension__take_snapshot",
+            Some(&args)
+        ));
+        assert!(!browser_observation_requests_file_output(
+            "chrome-devtools-mcp-6f0fffa__list_pages",
+            Some(&args)
+        ));
     }
 
     #[test]
