@@ -925,13 +925,13 @@ fn harness_tool(name: &str) -> Option<Tool> {
 
         HARNESS_APPROVAL_RESPOND_TOOL => (
             "Harness Approval Respond",
-            "Resolve one pending SourceNerve approval with allow or deny. Harness approvals remain bound to the exact run, workspace, tool, argument SHA-256, and Git HEAD; MCP extension approvals are bound to the exact authenticated principal, public tool, and argument SHA-256. Allowed approvals are one-shot and expire after a short bounded TTL; changed arguments require a new approval.",
+            "Respond to one pending approval: allow (exact one-shot), allow_run (up to 12 same-tool calls within one Harness run, capability, workspace and Git HEAD), allow_tool (up to 12 MCP extension calls for the same principal/tool/resource), or deny. Broader approval requires explicit user choice, expires rapidly, is refused for sensitive execution/destructive actions, and never overrides deny, OAuth, sandbox or workspace boundaries.",
             serde_json::json!({
                 "type": "object",
                 "required": ["approval_id", "decision"],
                 "properties": {
                     "approval_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-                    "decision": { "type": "string", "enum": ["allow", "deny"] }
+                    "decision": { "type": "string", "enum": ["allow", "allow_run", "allow_tool", "deny"] }
                 },
                 "additionalProperties": false
             }),
@@ -1065,6 +1065,42 @@ impl ServerHandler for SourceNerveMcp {
             Ok(self.dispatch_approved_workspace_exec(&request).await)
         } else if execution.gui_session_approved() {
             Ok(self.dispatch_approved_workspace_gui(&request).await)
+        } else if execution.harness_approval_consumed()
+            && execution.capability_id.starts_with("mcp.")
+        {
+            // One authenticated, current Harness approval must not result in a
+            // second independent MCP gateway approval for the same call.
+            // The gateway still enforces extension enabled/blocked, principal
+            // authorization, dispatcher classification and external OAuth.
+            let result = if let Some(dispatcher) = match request.name.as_ref() {
+                "mcp_extension_call_read" => Some(mcp_gateway::BridgeDispatcher::Read),
+                "mcp_extension_call_write" => Some(mcp_gateway::BridgeDispatcher::Write),
+                _ => None,
+            } {
+                match crate::mcp_base::bridge_call_arguments(&request) {
+                    Ok((public_tool, args)) => mcp_gateway::bridge_call_harness_approved(
+                        &self.state,
+                        &principal,
+                        &public_tool,
+                        args,
+                        dispatcher,
+                    )
+                    .await
+                    .map(Some),
+                    Err(error) => Ok(Some(Self::authorization_error(error))),
+                }
+            } else {
+                mcp_gateway::try_call_harness_approved(&self.state, &principal, &request).await
+            };
+            match result {
+                Ok(Some(response)) => Ok(response),
+                Ok(None) => Ok(Self::authorization_error(
+                    "Harness-approved extension tool is no longer installed",
+                )),
+                Err(error) => Ok(Self::authorization_error(&format!(
+                    "Harness-approved MCP extension dispatch failed: {error}"
+                ))),
+            }
         } else {
             self.dispatch_tool(request, context).await
         };
