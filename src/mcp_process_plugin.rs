@@ -1364,7 +1364,7 @@ mod tests {
         );
         assert_eq!(
             approval.input_schema["properties"]["decision"]["enum"],
-            serde_json::json!(["allow", "deny"])
+            serde_json::json!(["allow", "allow_run", "allow_tool", "deny"])
         );
     }
 
