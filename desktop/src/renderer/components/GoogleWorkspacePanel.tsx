@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type {
   AppsScriptProjectSummary,
+  AppsScriptCommentPreview,
   GoogleScriptAccessMode,
   GoogleWorkspaceStatus,
 } from "../../shared/google-workspace-api";
@@ -26,6 +27,9 @@ export function GoogleWorkspacePanel() {
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [incompleteSearch, setIncompleteSearch] = useState(false);
   const [scriptSummary, setScriptSummary] = useState("");
+  const [commentFileName, setCommentFileName] = useState("");
+  const [commentLine, setCommentLine] = useState("");
+  const [commentPreview, setCommentPreview] = useState<AppsScriptCommentPreview | null>(null);
   const [appId, setAppId] = useState("");
   const [region, setRegion] = useState("www.appsheet.com");
   const [key, setKey] = useState("");
@@ -114,6 +118,7 @@ export function GoogleWorkspacePanel() {
                 setStatus(response.value);
                 setProjects([]);
                 setNextPageToken(null);
+                setCommentPreview(null);
                 setMessage("Đã lưu OAuth Desktop Client và phạm vi quyền. Đổi scope sẽ yêu cầu consent lại; chưa tự cấp quyền.");
                 setClientId("");
                 setClientSecret("");
@@ -128,6 +133,7 @@ export function GoogleWorkspacePanel() {
                 setProjects([]);
                 setNextPageToken(null);
                 setScriptSummary("");
+                setCommentPreview(null);
                 setMessage("Đã nhận phản hồi OAuth. Hãy kiểm tra quyền API trên tài khoản Google.");
               })}>Đăng nhập Google</ActionButton>
             <ActionButton size="sm" variant="destructive" disabled={Boolean(busy) || !status?.connected}
@@ -138,6 +144,7 @@ export function GoogleWorkspacePanel() {
                 setScriptSummary("");
                 setProjects([]);
                 setNextPageToken(null);
+                setCommentPreview(null);
                 setMessage("Đã ngắt và thu hồi kết nối Google.");
               })}>Ngắt kết nối</ActionButton>
           </div>
@@ -185,7 +192,7 @@ export function GoogleWorkspacePanel() {
                       <p className="text-xs text-muted-foreground break-all">Script ID: {project.scriptId}</p>
                       <p className="text-xs text-muted-foreground">Cập nhật: {project.modifiedTime ?? "Không có dữ liệu"}</p>
                       <ActionButton size="sm" variant="secondary"
-                        onClick={() => setScriptId(project.scriptId)}>Chọn Script ID</ActionButton>
+                        onClick={() => { setScriptId(project.scriptId); setCommentPreview(null); }}>Chọn Script ID</ActionButton>
                     </li>
                   ))}
                 </ul>
@@ -204,7 +211,10 @@ export function GoogleWorkspacePanel() {
           <label className="block text-xs space-y-1">
             <span>Apps Script ID (project được bạn chọn)</span>
             <input aria-label="Apps Script ID" className={fieldClass} value={scriptId}
-              placeholder="Script ID" onChange={(event) => setScriptId(event.target.value)} />
+              placeholder="Script ID" onChange={(event) => {
+                setScriptId(event.target.value);
+                setCommentPreview(null);
+              }} />
           </label>
           <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || !status?.connected || !scriptId}
             onClick={() => void perform("script", async () => {
@@ -214,6 +224,77 @@ export function GoogleWorkspacePanel() {
               setMessage("Đọc source thành công. Chưa push hay deploy.");
             })}>Kiểm tra source</ActionButton>
           {scriptSummary && <p className="text-xs break-all text-muted-foreground">{scriptSummary}</p>}
+
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Thêm một dòng comment (HEAD)</p>
+            <p className="text-xs text-muted-foreground">
+              Xem trước bằng fingerprint mà không đưa source code qua ChatGPT.
+              Nhấn Ghi chỉ sau khi kiểm tra dự án, file và comment. Thay đổi HEAD có thể ảnh hưởng trigger;
+              không tạo version hoặc deployment.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Tên file .gs (để trống nếu dự án chỉ có một file .gs)</span>
+              <input aria-label="Apps Script comment filename" className={fieldClass}
+                value={commentFileName} onChange={(event) => {
+                  setCommentFileName(event.target.value);
+                  setCommentPreview(null);
+                }} placeholder="PMT_Lich_Hoat_Dong_Automation" />
+            </label>
+            <label className="block text-xs space-y-1">
+              <span>Đúng một dòng comment, bắt đầu bằng // </span>
+              <input aria-label="Apps Script comment text" className={fieldClass}
+                value={commentLine} onChange={(event) => {
+                  setCommentLine(event.target.value);
+                  setCommentPreview(null);
+                }} placeholder="// SourceNerve: kiểm tra cập nhật Apps Script từ ChatGPT." />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status?.connected || !scriptId.trim() ||
+                  !commentLine.startsWith("// ")}
+                onClick={() => void perform("comment-preview", async () => {
+                  setCommentPreview(null);
+                  const result = await api.previewScriptComment({
+                    scriptId: scriptId.trim(),
+                    commentLine,
+                    ...(commentFileName.trim() ? { fileName: commentFileName.trim() } : {}),
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setCommentPreview(result.value);
+                  setMessage("Đã xem trước bản vá nhỏ, chưa ghi Apps Script.");
+                })}>Xem trước comment</ActionButton>
+              <ActionButton size="sm" disabled={Boolean(busy) || !status?.connected ||
+                status.mode === "read" || !commentPreview || !commentPreview.wouldChange ||
+                scriptId.trim() !== commentPreview.scriptId ||
+                commentLine !== commentPreview.commentLine ||
+                (commentFileName.trim() !== "" && commentFileName.trim() !== commentPreview.fileName)}
+                onClick={() => void perform("comment-apply", async () => {
+                  if (!commentPreview) return;
+                  const result = await api.applyScriptComment({
+                    scriptId: commentPreview.scriptId,
+                    fileName: commentPreview.fileName,
+                    commentLine: commentPreview.commentLine,
+                    expectedFingerprint: commentPreview.expectedFingerprint,
+                    confirmed: true,
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setCommentPreview(null);
+                  setMessage(result.value.changed
+                    ? "Đã ghi và kiểm tra lại đúng một dòng comment trên Apps Script HEAD."
+                    : "Comment đã tồn tại ở đầu file, không ghi lại.");
+                })}>Ghi comment đã duyệt</ActionButton>
+            </div>
+            {commentPreview && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>File: {commentPreview.fileName} · {commentPreview.fileCount} tệp được giữ nguyên</p>
+                <p className="break-all">Fingerprint: {commentPreview.expectedFingerprint}</p>
+                <p>Thay đổi: {commentPreview.wouldChange
+                  ? "Thêm đúng một dòng ở đầu file"
+                  : "Comment đã có sẵn; không cần ghi"}</p>
+                <p>Manifest: giữ nguyên</p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg border border-border p-3 space-y-3">
