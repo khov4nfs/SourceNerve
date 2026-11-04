@@ -7,10 +7,13 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     harness::{self, HarnessRunIdRequest},
+    mcp_gateway,
     service::AppState,
 };
 
 pub const APPROVAL_TTL_SECONDS: i64 = 5 * 60;
+/// Explicit run-scoped approval is bounded to one tool + capability + Git HEAD.
+const MAX_RUN_SCOPE_USES: i64 = 12;
 const DEFAULT_LIST_LIMIT: usize = 100;
 const MAX_LIST_LIMIT: usize = 200;
 const MAX_NATIVE_REQUEST_ID_BYTES: usize = 128;
@@ -57,6 +60,8 @@ pub struct HarnessApprovalView {
     pub head_sha: String,
     pub policy: String,
     pub status: String,
+    pub approval_scope: String,
+    pub uses_remaining: i64,
     pub requested_execution_id: Option<String>,
     pub requested_at: i64,
     pub expires_at: i64,
@@ -101,6 +106,8 @@ struct ApprovalDbRow {
     head_sha: String,
     policy: String,
     status: String,
+    approval_scope: String,
+    uses_remaining: i64,
     requested_execution_id: Option<String>,
     requested_at: i64,
     expires_at: i64,
@@ -126,6 +133,8 @@ fn row_to_view(row: ApprovalDbRow) -> HarnessApprovalView {
         head_sha: row.head_sha,
         policy: row.policy,
         status: row.status,
+        approval_scope: row.approval_scope,
+        uses_remaining: row.uses_remaining,
         requested_execution_id: row.requested_execution_id,
         requested_at: row.requested_at,
         expires_at: row.expires_at,
@@ -201,7 +210,7 @@ async fn load(state: &AppState, approval_id: &str) -> AppResult<HarnessApprovalV
     let row: Option<ApprovalDbRow> = sqlx::query_as(
         "SELECT id, run_id, principal_id, workspace_id, tool_name, capability_id, argument_sha256, \
                 head_sha, policy, status, requested_execution_id, requested_at, expires_at, \
-                resolved_at, resolved_by, consumed_at, external_request_id \
+                resolved_at, resolved_by, consumed_at, external_request_id, approval_scope, uses_remaining \
          FROM harness_approvals WHERE id=?1",
     )
     .bind(approval_id)
@@ -237,7 +246,7 @@ pub(crate) async fn request_pending(
     let existing: Option<ApprovalDbRow> = sqlx::query_as(
         "SELECT id, run_id, principal_id, workspace_id, tool_name, capability_id, argument_sha256, \
                 head_sha, policy, status, requested_execution_id, requested_at, expires_at, \
-                resolved_at, resolved_by, consumed_at, external_request_id \
+                resolved_at, resolved_by, consumed_at, external_request_id, approval_scope, uses_remaining \
          FROM harness_approvals \
          WHERE run_id=?1 AND principal_id=?2 AND workspace_id=?3 AND tool_name=?4 \
            AND capability_id=?5 AND argument_sha256=?6 AND head_sha=?7 \
@@ -308,7 +317,7 @@ pub(crate) async fn consume_matching(
         "SELECT id FROM harness_approvals \
          WHERE run_id=?1 AND principal_id=?2 AND workspace_id=?3 AND tool_name=?4 \
            AND capability_id=?5 AND argument_sha256=?6 AND head_sha=?7 \
-           AND status='allowed' AND expires_at > unixepoch() \
+           AND approval_scope='exact' AND status='allowed' AND expires_at > unixepoch() \
          ORDER BY resolved_at DESC, id DESC LIMIT 1",
     )
     .bind(&intent.run_id)
@@ -320,21 +329,88 @@ pub(crate) async fn consume_matching(
     .bind(&intent.head_sha)
     .fetch_optional(&state.db)
     .await?;
-    let Some(id) = candidate else {
+    if let Some(id) = candidate {
+        let result = sqlx::query(
+            "UPDATE harness_approvals SET status='consumed', uses_remaining=0, consumed_at=unixepoch() \
+             WHERE id=?1 AND approval_scope='exact' AND status='allowed' AND expires_at > unixepoch()",
+        )
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
+        if result.rows_affected() == 1 {
+            return Ok(Some(id));
+        }
+    }
+
+    // A broader grant is NEVER inferred from a normal allow. It exists only
+    // after an explicit allow_run decision, bound to this run, principal,
+    // workspace, tool, capability and HEAD. Each use is atomically debited.
+    // Native permissions and privileged shell sandboxes cannot use this path.
+    if !eligible_for_run_scope(&intent.tool) {
+        return Ok(None);
+    }
+    let scoped_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM harness_approvals \
+         WHERE run_id=?1 AND principal_id=?2 AND workspace_id=?3 AND tool_name=?4 \
+           AND capability_id=?5 AND head_sha=?6 AND approval_scope='run' \
+           AND status='allowed' AND uses_remaining>0 AND expires_at>unixepoch() \
+         ORDER BY resolved_at DESC, id DESC LIMIT 1",
+    )
+    .bind(&intent.run_id)
+    .bind(&intent.principal_id)
+    .bind(&intent.workspace)
+    .bind(&intent.tool)
+    .bind(&intent.capability_id)
+    .bind(&intent.head_sha)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(id) = scoped_id else {
         return Ok(None);
     };
     let result = sqlx::query(
-        "UPDATE harness_approvals SET status='consumed', consumed_at=unixepoch() \
-         WHERE id=?1 AND status='allowed' AND expires_at > unixepoch()",
+        "UPDATE harness_approvals \
+         SET uses_remaining=uses_remaining-1, \
+             status=CASE WHEN uses_remaining=1 THEN 'consumed' ELSE 'allowed' END, \
+             consumed_at=CASE WHEN uses_remaining=1 THEN unixepoch() ELSE consumed_at END \
+         WHERE id=?1 AND approval_scope='run' AND status='allowed' \
+           AND uses_remaining>0 AND expires_at>unixepoch()",
     )
     .bind(&id)
     .execute(&state.db)
     .await?;
-    if result.rows_affected() == 1 {
-        Ok(Some(id))
-    } else {
-        Ok(None)
+    Ok((result.rows_affected() == 1).then_some(id))
+}
+
+/// Broad grants are never valid for raw command/sandbox or native OS
+/// permission prompts. Those always stay exact, one-shot requests.
+fn eligible_for_run_scope(tool: &str) -> bool {
+    if matches!(
+        tool,
+        "workspace_exec"
+            | "workspace_process_start"
+            | "codex_native_command_execution"
+            | "codex_native_permissions"
+    ) {
+        return false;
     }
+    // Irreversible Git/provider actions always require exact confirmation.
+    !tool.split(['_', '-']).any(|word| {
+        matches!(
+            word,
+            "merge"
+                | "push"
+                | "delete"
+                | "remove"
+                | "reset"
+                | "revoke"
+                | "deploy"
+                | "publish"
+                | "drop"
+                | "erase"
+                | "destroy"
+                | "transfer"
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -795,7 +871,7 @@ async fn latest_matching(
     let row: Option<ApprovalDbRow> = sqlx::query_as(
         "SELECT id, run_id, principal_id, workspace_id, tool_name, capability_id, argument_sha256, \
                 head_sha, policy, status, requested_execution_id, requested_at, expires_at, \
-                resolved_at, resolved_by, consumed_at, external_request_id \
+                resolved_at, resolved_by, consumed_at, external_request_id, approval_scope, uses_remaining \
          FROM harness_approvals \
          WHERE run_id=?1 AND principal_id=?2 AND workspace_id=?3 AND tool_name=?4 \
            AND capability_id=?5 AND argument_sha256=?6 AND head_sha=?7 \
@@ -952,7 +1028,7 @@ pub async fn list(
     let rows: Vec<ApprovalDbRow> = sqlx::query_as(
         "SELECT id, run_id, principal_id, workspace_id, tool_name, capability_id, argument_sha256, \
                 head_sha, policy, status, requested_execution_id, requested_at, expires_at, \
-                resolved_at, resolved_by, consumed_at, external_request_id \
+                resolved_at, resolved_by, consumed_at, external_request_id, approval_scope, uses_remaining \
          FROM harness_approvals \
          WHERE run_id=?1 AND (?2 IS NULL OR status=?2) \
          ORDER BY requested_at DESC, id DESC LIMIT ?3",
@@ -968,20 +1044,72 @@ pub async fn list(
     })
 }
 
+/// Extension capability names come from the immutable Harness snapshot, not
+/// from user arguments. Sensitive extension mutations may never inherit a
+/// broader run grant, even through the stable MCP bridge.
+async fn eligible_for_scoped_approval(
+    state: &AppState,
+    approval: &HarnessApprovalView,
+) -> AppResult<bool> {
+    if !eligible_for_run_scope(&approval.tool) {
+        return Ok(false);
+    }
+    if !approval.capability_id.starts_with("mcp.") {
+        return Ok(true);
+    }
+    let snapshot: Option<String> =
+        sqlx::query_scalar("SELECT capability_snapshot_json FROM harness_runs WHERE id=?1")
+            .bind(&approval.run_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(snapshot) = snapshot else {
+        return Ok(false);
+    };
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&snapshot).map_err(anyhow::Error::from)?;
+    let Some(tool) = snapshot
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|capabilities| {
+            capabilities.iter().find(|capability| {
+                capability.get("id").and_then(serde_json::Value::as_str)
+                    == Some(approval.capability_id.as_str())
+            })
+        })
+        .and_then(|capability| capability.get("name"))
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(false);
+    };
+    Ok(mcp_gateway::eligible_for_tool_scope(tool))
+}
+
 pub async fn respond(
     state: &AppState,
     request: HarnessApprovalRespondRequest,
     principal_id: &str,
     operator: bool,
 ) -> AppResult<HarnessApprovalRespondResult> {
-    let target_status = decision_status(&request.decision)?;
+    let run_scoped = request.decision == "allow_run";
+    let target_status = if run_scoped {
+        "allowed"
+    } else {
+        decision_status(&request.decision)?
+    };
     let mut approval = load(state, &request.approval_id).await?;
     ensure_owner(&approval, principal_id, operator)?;
     expire_for_run(state, &approval.run_id).await?;
     approval = load(state, &request.approval_id).await?;
     ensure_owner(&approval, principal_id, operator)?;
 
-    if approval.status == target_status {
+    if run_scoped && !eligible_for_scoped_approval(state, &approval).await? {
+        return Err(AppError::InvalidRequest(
+            "run-scoped approval is not available for this sensitive tool; use exact allow".into(),
+        ));
+    }
+    if approval.status == target_status
+        && approval.approval_scope == if run_scoped { "run" } else { "exact" }
+    {
         return Ok(HarnessApprovalRespondResult {
             approval,
             replayed: true,
@@ -1007,11 +1135,17 @@ pub async fn respond(
     };
     let mut tx = state.db.begin().await?;
     let result = sqlx::query(
-        "UPDATE harness_approvals SET status=?1, resolved_by=?2, resolved_at=unixepoch() \
-         WHERE id=?3 AND status='pending' AND expires_at > unixepoch()",
+        "UPDATE harness_approvals \
+         SET status=?1, resolved_by=?2, resolved_at=unixepoch(), \
+             approval_scope=?3, uses_remaining=?4, \
+             expires_at=CASE WHEN ?3='run' THEN unixepoch()+?5 ELSE expires_at END \
+         WHERE id=?6 AND status='pending' AND expires_at > unixepoch()",
     )
     .bind(target_status)
     .bind(&resolver)
+    .bind(if run_scoped { "run" } else { "exact" })
+    .bind(if run_scoped { MAX_RUN_SCOPE_USES } else { 1 })
+    .bind(APPROVAL_TTL_SECONDS)
     .bind(&approval.id)
     .execute(&mut *tx)
     .await?;
@@ -1035,6 +1169,8 @@ pub async fn respond(
             "workspace": approval.workspace,
             "head_sha": approval.head_sha,
             "decision": request.decision,
+            "approval_scope": if run_scoped { "run" } else { "exact" },
+            "uses_remaining": if run_scoped { MAX_RUN_SCOPE_USES } else { 1 },
             "resolved_by": resolver,
         }),
     )
