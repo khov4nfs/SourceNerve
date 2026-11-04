@@ -67,6 +67,33 @@ export interface AppsScriptUpdateInput {
   expectedFingerprint: string;
   confirmed: true;
 }
+export interface AppsScriptCommentPatchInput {
+  scriptId: string;
+  commentLine: string;
+  fileName?: string;
+}
+export interface AppsScriptCommentPreview {
+  scriptId: string;
+  fileName: string;
+  commentLine: string;
+  expectedFingerprint: string;
+  position: "file-start";
+  wouldChange: boolean;
+  fileCount: number;
+  manifestPreserved: true;
+}
+export interface AppsScriptCommentApplyInput extends AppsScriptCommentPatchInput {
+  expectedFingerprint: string;
+  confirmed: true;
+}
+export interface AppsScriptCommentApplyResult {
+  scriptId: string;
+  fileName: string;
+  previousFingerprint: string;
+  newFingerprint: string;
+  changed: boolean;
+  verified: true;
+}
 export interface AppSheetKeyInput {
   appId: string;
   region: string;
@@ -281,6 +308,95 @@ export class GoogleWorkspaceManager {
     };
   }
 
+  /**
+   * Preview is metadata-only from the caller's perspective. Read entire source
+   * only in the Desktop Main process, then return a small hash and exact intent.
+   * No source file contents are returned through the public MCP bridge.
+   */
+  async previewAppsScriptComment(input: AppsScriptCommentPatchInput): Promise<AppsScriptCommentPreview> {
+    validateScriptCommentPatch(input);
+    const current = await this.getAppsScriptContent(input.scriptId);
+    assertScriptManifest(current.files);
+    const file = selectCommentFile(current.files, input.fileName);
+    return {
+      scriptId: input.scriptId,
+      fileName: file.name,
+      commentLine: input.commentLine,
+      expectedFingerprint: current.fingerprint,
+      position: "file-start",
+      wouldChange: !startsWithScriptComment(file.source, input.commentLine),
+      fileCount: current.files.length,
+      manifestPreserved: true,
+    };
+  }
+
+  /**
+   * Intentionally narrow edit operation. The caller supplies only a one-line
+   * JavaScript comment + expected HEAD fingerprint; the original project files
+   * never travel through ChatGPT, an MCP tool request or the renderer.
+   *
+   * Google updateContent replaces all HEAD files. Reuse the existing guarded
+   * full-content updater inside Main, then re-read once to verify the result.
+   * Never automatically retry an ambiguous PUT / timeout.
+   */
+  async applyAppsScriptComment(input: AppsScriptCommentApplyInput): Promise<AppsScriptCommentApplyResult> {
+    validateScriptCommentPatch(input);
+    if (input.confirmed !== true || !/^[0-9a-f]{64}$/.test(input.expectedFingerprint)) {
+      throw new Error("Apps Script comment requires an explicit confirmation and preview fingerprint");
+    }
+    const mode = (await this.googleStatus()).mode;
+    if (!mode || !modeAllows(mode, "edit")) {
+      throw new Error("Google Apps Script scope insufficient; reconnect with explicit permission");
+    }
+    const current = await this.getAppsScriptContent(input.scriptId);
+    if (current.fingerprint !== input.expectedFingerprint) {
+      throw new Error("Apps Script remote content changed; preview the comment again before writing");
+    }
+    assertScriptManifest(current.files);
+    const file = selectCommentFile(current.files, input.fileName);
+    if (startsWithScriptComment(file.source, input.commentLine)) {
+      return {
+        scriptId: input.scriptId,
+        fileName: file.name,
+        previousFingerprint: current.fingerprint,
+        newFingerprint: current.fingerprint,
+        changed: false,
+        verified: true,
+      };
+    }
+    const separator = file.source.includes("\r\n") ? "\r\n" : "\n";
+    const files = current.files.map((entry): AppsScriptFile => (
+      entry === file ? { ...entry, source: input.commentLine + separator + entry.source } : entry
+    ));
+    const expectedNextFingerprint = contentFingerprint(files);
+    const updated = await this.updateAppsScriptContent({
+      scriptId: input.scriptId,
+      files,
+      expectedFingerprint: input.expectedFingerprint,
+      confirmed: true,
+    });
+    if (updated.fingerprint !== expectedNextFingerprint) {
+      throw new Error("Apps Script update response differed from the planned comment; re-preview before retrying");
+    }
+    let verified: AppsScriptContent;
+    try {
+      verified = await this.getAppsScriptContent(input.scriptId);
+    } catch {
+      throw new Error("Apps Script write may have succeeded but verification failed; re-preview before retrying");
+    }
+    if (verified.fingerprint !== expectedNextFingerprint) {
+      throw new Error("Apps Script post-write content differs from the planned comment; inspect before retrying");
+    }
+    return {
+      scriptId: input.scriptId,
+      fileName: file.name,
+      previousFingerprint: input.expectedFingerprint,
+      newFingerprint: expectedNextFingerprint,
+      changed: true,
+      verified: true,
+    };
+  }
+
   async updateAppsScriptContent(input: AppsScriptUpdateInput): Promise<AppsScriptContent> {
     if (input.confirmed !== true) throw new Error("Explicit Apps Script update confirmation required");
     if (!/^[a-f0-9]{64}$/.test(input.expectedFingerprint)) throw new Error("Invalid expected fingerprint");
@@ -404,6 +520,38 @@ export class GoogleWorkspaceManager {
     }
     return payload as Record<string, unknown>;
   }
+}
+
+function validateScriptCommentPatch(input: AppsScriptCommentPatchInput): void {
+  scriptPath(input.scriptId);
+  if (typeof input.commentLine !== "string" || input.commentLine.length < 4 ||
+      input.commentLine.length > 200 || Buffer.byteLength(input.commentLine, "utf8") > 512 ||
+      !input.commentLine.startsWith("// ") || /[\r\n\0\u2028\u2029]/.test(input.commentLine)) {
+    throw new Error("Comment must be a single JavaScript // line, at most 200 characters");
+  }
+  if (input.fileName !== undefined && (typeof input.fileName !== "string" ||
+      input.fileName.length < 1 || input.fileName.length > 128 ||
+      input.fileName === "." || input.fileName === ".." ||
+      /[\r\n\0/\\]/.test(input.fileName))) {
+    throw new Error("Invalid Apps Script source filename");
+  }
+}
+function assertScriptManifest(files: AppsScriptFile[]): void {
+  if (!files.some((file) => file.name === "appsscript" && file.type === "JSON")) {
+    throw new Error("Apps Script manifest is missing; refusing a comment patch");
+  }
+}
+function selectCommentFile(files: AppsScriptFile[], fileName?: string): AppsScriptFile {
+  const targets = files.filter((file) => file.type === "SERVER_JS" &&
+    (fileName === undefined || file.name === fileName));
+  if (targets.length !== 1) {
+    throw new Error("Select exactly one Apps Script SERVER_JS filename for the comment");
+  }
+  return targets[0];
+}
+function startsWithScriptComment(source: string, comment: string): boolean {
+  return source === comment || source.startsWith(comment + "\n") ||
+    source.startsWith(comment + "\r\n");
 }
 
 export function contentFingerprint(files: AppsScriptFile[]): string {
