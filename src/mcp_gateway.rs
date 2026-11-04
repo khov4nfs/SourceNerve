@@ -20,7 +20,8 @@ use crate::{
     },
     mcp_extension_client,
     mcp_extension_policy::{
-        ApprovalMode, PolicyDecision, complete_known_browser_classification, evaluate_tool_policy,
+        ApprovalMode, PolicyDecision, complete_known_browser_classification,
+        complete_known_google_workspace_classification, evaluate_tool_policy,
     },
     mcp_extension_registry::{self, ExtensionAuthType, ExtensionRecord, ExtensionToolRecord},
     mcp_extension_runtime,
@@ -532,12 +533,7 @@ pub async fn bridge_call(
         )));
     };
 
-    let is_read_only = complete_known_browser_classification(
-        &route.tool.public_name,
-        route.tool.policy.classification,
-    )
-    .read_only
-        == Some(true);
+    let is_read_only = effective_extension_classification(&route.tool).read_only == Some(true);
     let dispatcher_matches = match dispatcher {
         BridgeDispatcher::Read => is_read_only,
         BridgeDispatcher::Write => !is_read_only,
@@ -991,8 +987,7 @@ fn public_tool(tool: &ExtensionToolRecord) -> AppResult<Tool> {
             .unwrap_or_else(|| format!("Forwarded MCP extension tool `{}`", tool.original_name)),
         Arc::new(schema.clone()),
     );
-    let classification =
-        complete_known_browser_classification(&tool.public_name, tool.policy.classification);
+    let classification = effective_extension_classification(tool);
     result.title = Some(title.clone());
     result.output_schema = Some(extension_output_schema(&tool.public_name));
     result.annotations = Some(
@@ -1003,6 +998,14 @@ fn public_tool(tool: &ExtensionToolRecord) -> AppResult<Tool> {
             .open_world(classification.open_world.unwrap_or(true)),
     );
     Ok(result)
+}
+
+fn effective_extension_classification(
+    tool: &ExtensionToolRecord,
+) -> crate::mcp_extension_policy::ToolClassification {
+    let browser =
+        complete_known_browser_classification(&tool.public_name, tool.policy.classification);
+    complete_known_google_workspace_classification(&tool.extension_id, &tool.public_name, browser)
 }
 
 fn ensure_extension_structured_content(mut result: CallToolResult) -> CallToolResult {
@@ -1154,6 +1157,39 @@ mod tests {
             "desktop-api-key-proxy"
         );
         assert_eq!(summary["browser_use"]["routable"], false);
+    }
+
+    #[test]
+    fn google_script_project_directory_is_routable_through_read_dispatcher() {
+        let mut script = tool(None);
+        script.extension_id = "sourcenerve-google-workspace".into();
+        script.original_name = "apps_script_list_projects".into();
+        script.public_name = "google-workspace__apps_script_list_projects".into();
+        let annotation = public_tool(&script).expect("built-in script directory");
+        assert_eq!(
+            annotation
+                .annotations
+                .as_ref()
+                .and_then(|value| value.read_only_hint),
+            Some(true)
+        );
+        assert_eq!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
+
+        script.extension_id = "untrusted-google-extension".into();
+        assert_ne!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
+        script.extension_id = "sourcenerve-google-workspace".into();
+        script.original_name = "apps_script_update_content".into();
+        script.public_name = "google-workspace__apps_script_update_content".into();
+        assert_ne!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
     }
 
     #[test]
