@@ -1003,15 +1003,9 @@ fn public_tool(tool: &ExtensionToolRecord) -> AppResult<Tool> {
 fn effective_extension_classification(
     tool: &ExtensionToolRecord,
 ) -> crate::mcp_extension_policy::ToolClassification {
-    let browser = complete_known_browser_classification(
-        &tool.public_name,
-        tool.policy.classification,
-    );
-    complete_known_google_workspace_classification(
-        &tool.extension_id,
-        &tool.public_name,
-        browser,
-    )
+    let browser =
+        complete_known_browser_classification(&tool.public_name, tool.policy.classification);
+    complete_known_google_workspace_classification(&tool.extension_id, &tool.public_name, browser)
 }
 
 fn ensure_extension_structured_content(mut result: CallToolResult) -> CallToolResult {
@@ -1179,14 +1173,23 @@ mod tests {
                 .and_then(|value| value.read_only_hint),
             Some(true)
         );
-        assert_eq!(effective_extension_classification(&script).read_only, Some(true));
+        assert_eq!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
 
         script.extension_id = "untrusted-google-extension".into();
-        assert_ne!(effective_extension_classification(&script).read_only, Some(true));
+        assert_ne!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
         script.extension_id = "sourcenerve-google-workspace".into();
         script.original_name = "apps_script_update_content".into();
         script.public_name = "google-workspace__apps_script_update_content".into();
-        assert_ne!(effective_extension_classification(&script).read_only, Some(true));
+        assert_ne!(
+            effective_extension_classification(&script).read_only,
+            Some(true)
+        );
     }
 
     #[test]
