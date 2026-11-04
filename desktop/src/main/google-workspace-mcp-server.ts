@@ -17,6 +17,8 @@ type ToolName =
   | "apps_script_get_project"
   | "apps_script_get_content"
   | "apps_script_update_content"
+  | "apps_script_comment_preview"
+  | "apps_script_comment_apply"
   | "apps_script_create_version"
   | "apps_script_create_deployment"
   | "appsheet_key_status"
@@ -39,6 +41,18 @@ const TOOL_DEFINITIONS: Definition[] = [
   }, [], false),
   definition("apps_script_get_project", "Read metadata for one explicitly selected Google Apps Script project", { scriptId: SCRIPT_ID }, ["scriptId"], false),
   definition("apps_script_get_content", "Read Apps Script source files and manifest for one explicit script ID; project source may contain sensitive data", { scriptId: SCRIPT_ID }, ["scriptId"], false, "ask"),
+  definition("apps_script_comment_preview", "Preview a single-line JavaScript comment at the start of one Apps Script source file; reads locally and returns only a fingerprint, file name and change summary (never full source)", {
+    scriptId: SCRIPT_ID,
+    fileName: { type: "string", minLength: 1, maxLength: 128 },
+    commentLine: { type: "string", minLength: 4, maxLength: 200, pattern: "^// " },
+  }, ["scriptId", "commentLine"], false),
+  definition("apps_script_comment_apply", "Apply one previously previewed single-line JavaScript // comment at the start of a source file; Desktop reads and preserves ALL current files, checks exact HEAD fingerprint, and verifies the change; explicit one-shot approval required, never retry on uncertain response", {
+    scriptId: SCRIPT_ID,
+    fileName: { type: "string", minLength: 1, maxLength: 128 },
+    commentLine: { type: "string", minLength: 4, maxLength: 200, pattern: "^// " },
+    expectedFingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    confirmed: { type: "boolean", const: true },
+  }, ["scriptId", "fileName", "commentLine", "expectedFingerprint", "confirmed"], true, "ask"),
   definition("apps_script_update_content", "Overwrite all Apps Script HEAD files ONLY after reviewing full file list, matching a freshly read SHA-256 fingerprint and receiving explicit confirmation; never retry on timeout", {
     scriptId: SCRIPT_ID,
     files: { type: "array", minItems: 1, maxItems: 200, items: { type: "object",
@@ -231,6 +245,20 @@ export class GoogleWorkspaceMcpServer {
       });
       case "apps_script_get_project": return this.manager.getAppsScriptProject(requiredString(args.scriptId, "scriptId", 160));
       case "apps_script_get_content": return this.manager.getAppsScriptContent(requiredString(args.scriptId, "scriptId", 160));
+      case "apps_script_comment_preview": return this.manager.previewAppsScriptComment({
+        scriptId: requiredString(args.scriptId, "scriptId", 160),
+        commentLine: requiredString(args.commentLine, "commentLine", 200),
+        ...(args.fileName === undefined ? {} : { fileName: requiredString(args.fileName, "fileName", 128) }),
+      });
+      case "apps_script_comment_apply":
+        if (args.confirmed !== true) throw new Error("Explicit Apps Script comment confirmation required");
+        return this.manager.applyAppsScriptComment({
+          scriptId: requiredString(args.scriptId, "scriptId", 160),
+          fileName: requiredString(args.fileName, "fileName", 128),
+          commentLine: requiredString(args.commentLine, "commentLine", 200),
+          expectedFingerprint: requiredString(args.expectedFingerprint, "expectedFingerprint", 64),
+          confirmed: true,
+        });
       case "apps_script_update_content": {
         const { scriptId, expectedFingerprint, confirmed, files } = args;
         if (confirmed !== true || !Array.isArray(files)) throw new Error("Explicit file update confirmation is required");
