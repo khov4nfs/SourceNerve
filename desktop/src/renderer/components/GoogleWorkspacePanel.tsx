@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import type {
   AppsScriptProjectSummary,
   AppsScriptCommentPreview,
+  AppsScriptPatchPreview,
+  AppsScriptTextEdit,
+  AppsScriptEditOperation,
   GoogleScriptAccessMode,
   GoogleWorkspaceStatus,
 } from "../../shared/google-workspace-api";
@@ -27,6 +30,12 @@ export function GoogleWorkspacePanel() {
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [incompleteSearch, setIncompleteSearch] = useState(false);
   const [scriptSummary, setScriptSummary] = useState("");
+  const [patchFileName, setPatchFileName] = useState("");
+  const [patchOperation, setPatchOperation] = useState<AppsScriptEditOperation>("replace_exact");
+  const [patchFindText, setPatchFindText] = useState("");
+  const [patchInsertText, setPatchInsertText] = useState("");
+  const [patchEdits, setPatchEdits] = useState<AppsScriptTextEdit[]>([]);
+  const [patchPreview, setPatchPreview] = useState<AppsScriptPatchPreview | null>(null);
   const [commentFileName, setCommentFileName] = useState("");
   const [commentLine, setCommentLine] = useState("");
   const [commentPreview, setCommentPreview] = useState<AppsScriptCommentPreview | null>(null);
@@ -224,6 +233,113 @@ export function GoogleWorkspacePanel() {
               setMessage("Đọc source thành công. Chưa push hay deploy.");
             })}>Kiểm tra source</ActionButton>
           {scriptSummary && <p className="text-xs break-all text-muted-foreground">{scriptSummary}</p>}
+
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Kế hoạch sửa mã nguồn (HEAD)</p>
+            <p className="text-xs text-muted-foreground">
+              Thay thế đoạn mã khớp chính xác hoặc thêm đầu/cuối file. Có thể gom tối đa 16 chỉnh sửa
+              thành một kế hoạch, một lần ghi có phê duyệt. SourceNerve tự giữ tất cả file còn lại
+              trong Desktop; không gửi source code toàn dự án qua ChatGPT.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Tên file Apps Script (không gồm đuôi .gs/.html)</span>
+              <input aria-label="Apps Script patch filename" className={fieldClass}
+                value={patchFileName} onChange={(event) => setPatchFileName(event.target.value)}
+                placeholder="Code" />
+            </label>
+            <label className="block text-xs space-y-1">
+              <span>Loại chỉnh sửa</span>
+              <select aria-label="Apps Script patch operation" className={fieldClass}
+                value={patchOperation}
+                onChange={(event) => setPatchOperation(event.target.value as AppsScriptEditOperation)}>
+                <option value="replace_exact">Thay thế một đoạn khớp chính xác duy nhất</option>
+                <option value="prepend">Thêm vào đầu file</option>
+                <option value="append">Thêm vào cuối file</option>
+              </select>
+            </label>
+            {patchOperation === "replace_exact" && (
+              <label className="block text-xs space-y-1">
+                <span>Đoạn cần tìm (khớp chính xác một lần, tối đa 16 KiB)</span>
+                <textarea aria-label="Apps Script patch find text" rows={3}
+                  className={fieldClass} value={patchFindText}
+                  onChange={(event) => setPatchFindText(event.target.value)} />
+              </label>
+            )}
+            <label className="block text-xs space-y-1">
+              <span>{patchOperation === "replace_exact" ? "Đoạn thay thế" : "Nội dung cần chèn"} (tối đa 8 KiB)</span>
+              <textarea aria-label="Apps Script patch replacement text" rows={3}
+                className={fieldClass} value={patchInsertText}
+                onChange={(event) => setPatchInsertText(event.target.value)} />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) ||
+                patchEdits.length >= 16 || !patchFileName.trim() || !patchInsertText ||
+                (patchOperation === "replace_exact" && !patchFindText)}
+                onClick={() => {
+                  setPatchEdits((previous) => [...previous, {
+                    fileName: patchFileName.trim(), operation: patchOperation,
+                    ...(patchOperation === "replace_exact" ? { findText: patchFindText } : {}),
+                    text: patchInsertText,
+                  }]);
+                  setPatchPreview(null);
+                  setPatchFindText("");
+                  setPatchInsertText("");
+                }}>Thêm vào kế hoạch</ActionButton>
+              <ActionButton size="sm" variant="secondary" disabled={Boolean(busy) || patchEdits.length === 0}
+                onClick={() => { setPatchEdits([]); setPatchPreview(null); }}>Xóa kế hoạch</ActionButton>
+            </div>
+            {patchEdits.length > 0 && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>{patchEdits.length} chỉnh sửa đã chọn:</p>
+                <ul className="list-disc pl-4">
+                  {patchEdits.map((edit, index) => (
+                    <li key={index}>{edit.fileName} · {edit.operation}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <ActionButton size="sm" variant="secondary"
+                disabled={Boolean(busy) || !status?.connected || !scriptId.trim() || patchEdits.length === 0}
+                onClick={() => void perform("patch-preview", async () => {
+                  setPatchPreview(null);
+                  const result = await api.previewScriptPatch({ scriptId: scriptId.trim(), edits: patchEdits });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setPatchPreview(result.value);
+                  setMessage("Đã xem trước kế hoạch sửa mã; chưa thay đổi Google Apps Script.");
+                })}>Xem trước kế hoạch</ActionButton>
+              <ActionButton size="sm" disabled={Boolean(busy) || !status?.connected ||
+                status.mode === "read" || !patchPreview || !patchPreview.wouldChange ||
+                patchPreview.scriptId !== scriptId.trim() ||
+                patchPreview.editCount !== patchEdits.length}
+                onClick={() => void perform("patch-apply", async () => {
+                  if (!patchPreview) return;
+                  const result = await api.applyScriptPatch({
+                    scriptId: patchPreview.scriptId,
+                    edits: patchEdits,
+                    expectedFingerprint: patchPreview.expectedFingerprint,
+                    expectedPatchedFingerprint: patchPreview.expectedPatchedFingerprint,
+                    planFingerprint: patchPreview.planFingerprint,
+                    confirmed: true,
+                  });
+                  if (!result.ok) throw new Error(result.error.message);
+                  setPatchPreview(null);
+                  setPatchEdits([]);
+                  setMessage(result.value.changed
+                    ? "Đã ghi và xác minh kế hoạch sửa Apps Script HEAD thành công."
+                    : "Kế hoạch đã có sẵn trên HEAD, không cần ghi lại.");
+                })}>Ghi kế hoạch đã duyệt</ActionButton>
+            </div>
+            {patchPreview && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>{patchPreview.editCount} chỉnh sửa · {patchPreview.changedFiles.length} file sẽ thay đổi</p>
+                <p>File: {patchPreview.changedFiles.join(", ") || "Không có thay đổi"}</p>
+                <p className="break-all">HEAD: {patchPreview.expectedFingerprint}</p>
+                <p className="break-all">Sau khi ghi: {patchPreview.expectedPatchedFingerprint}</p>
+                <p>Manifest và các file không được chọn sẽ được giữ nguyên.</p>
+              </div>
+            )}
+          </div>
 
           <div className="rounded-lg border border-border p-3 space-y-2">
             <p className="text-sm font-medium">Thêm một dòng comment (HEAD)</p>
