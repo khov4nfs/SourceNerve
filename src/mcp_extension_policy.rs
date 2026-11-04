@@ -118,6 +118,7 @@ pub fn complete_known_google_workspace_classification(
     if !matches!(
         public_name,
         "google-workspace__apps_script_list_projects"
+            | "google-workspace__apps_script_patch_preview"
             | "google-workspace__apps_script_comment_preview"
             | "google-workspace__apps_script_get_project"
             | "google-workspace__apps_script_get_content"
@@ -481,6 +482,7 @@ mod tests {
     fn first_party_google_workspace_reads_use_read_dispatcher() {
         for public_name in [
             "google-workspace__apps_script_list_projects",
+            "google-workspace__apps_script_patch_preview",
             "google-workspace__apps_script_comment_preview",
             "google-workspace__apps_script_get_project",
             "google-workspace__apps_script_get_content",
@@ -516,6 +518,7 @@ mod tests {
         );
         for name in [
             "google-workspace__apps_script_update_content",
+            "google-workspace__apps_script_patch_apply",
             "google-workspace__apps_script_comment_apply",
             "google-workspace__apps_script_create_version",
             "google-workspace__apps_script_create_deployment",
