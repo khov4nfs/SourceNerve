@@ -303,7 +303,7 @@ describe("Google Workspace Desktop secure adapters", () => {
       planFingerprint: preview.planFingerprint, confirmed: true,
     })).rejects.toThrow(/differs from reviewed edit plan/);
     await expect(f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID,
-      edits: [{ ...edits[0], text: "" }],
+      edits: [{ ...edits[0], operation: "prepend", findText: undefined, text: "" }],
     })).rejects.toThrow(/Invalid Apps Script text edit/);
     await expect(f.manager.previewAppsScriptPatch({ scriptId: SCRIPT_ID,
       edits: [{ ...edits[0], fileName: "../private" }],
