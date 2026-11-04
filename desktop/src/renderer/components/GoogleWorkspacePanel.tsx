@@ -128,6 +128,8 @@ export function GoogleWorkspacePanel() {
                 setProjects([]);
                 setNextPageToken(null);
                 setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã lưu OAuth Desktop Client và phạm vi quyền. Đổi scope sẽ yêu cầu consent lại; chưa tự cấp quyền.");
                 setClientId("");
                 setClientSecret("");
@@ -143,6 +145,8 @@ export function GoogleWorkspacePanel() {
                 setNextPageToken(null);
                 setScriptSummary("");
                 setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã nhận phản hồi OAuth. Hãy kiểm tra quyền API trên tài khoản Google.");
               })}>Đăng nhập Google</ActionButton>
             <ActionButton size="sm" variant="destructive" disabled={Boolean(busy) || !status?.connected}
@@ -154,6 +158,8 @@ export function GoogleWorkspacePanel() {
                 setProjects([]);
                 setNextPageToken(null);
                 setCommentPreview(null);
+                setPatchPreview(null);
+                setPatchEdits([]);
                 setMessage("Đã ngắt và thu hồi kết nối Google.");
               })}>Ngắt kết nối</ActionButton>
           </div>
