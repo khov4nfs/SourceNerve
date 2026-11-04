@@ -46,6 +46,18 @@ Use the durable task lifecycle for webhook jobs, unattended/restart-safe automat
 
 The stronger task snapshot, coordination, worktree-drift, and graph-version guards belong to this durable automation path. `task_begin` may snapshot a pre-existing dirty tree, but later worktree drift still fails closed; protected branch/commit/push steps keep their own Git safety guards.
 
+## External MCP/provider operations — compact review by default
+
+For operations on connected services (Google Workspace, AppSheet, browser, Figma, GitHub and other MCP extensions), do not assume this repository-edit procedure is the right provider workflow.
+
+1. Discover the exact tool and its SourceNerve policy, OAuth scope, risk and expected outputs. Prefer safe metadata/list/status queries over fetching full sensitive records or complete source trees.
+2. If a provider adapter offers a bounded `preview`/`apply` pair, use the preview to obtain a target-scoped plan hash and concise impact summary without copying entire remote documents through chat. For Apps Script use `apps_script_patch_preview` and one `apps_script_patch_apply` for a reviewed multi-edit source change.
+3. The user's confirmation binds only the named target, reviewed edits, state fingerprint and action. Keep SourceNerve `Ask` approvals and host safety decisions as separate requirements. Never submit an unreviewed mutation or silently broaden an approved tool's arguments.
+4. Batch only mutations that the provider adapter itself can apply as one bounded, guarded target operation. Publishing, deployment, Git push/merge and multiple external-provider actions remain separately approved when policy requires.
+5. Verify the outcome with a read-only query and return a compact receipt. If remote status after write is ambiguous, do not retry the write blindly. If host safety rejects an action, stop and explain the Desktop/manual approval path; never switch tools or payloads to evade the rejection.
+
+Current cross-provider architecture and unimplemented adapters are tracked in `docs/source-nerve-operation-approval-design.md`. Do not claim the plan engine exists for every plugin yet.
+
 ## Safety rules
 
 - Keep every read/write/command scoped to a configured workspace.
