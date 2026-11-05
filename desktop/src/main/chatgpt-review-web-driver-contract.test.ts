@@ -32,7 +32,9 @@ describe("ChatGPT review web driver security contract", () => {
     expect(source).toContain("do not call harness_run_get as a startup precondition");
     expect(source).toContain("do not block solely because that run id is unavailable or not found");
     expect(source).toContain("call mcp_extension_catalog and inspect its capabilities summary");
+    expect(source).toContain("capabilities.browser_visual_observation.routable is true");
     expect(source).toContain("capabilities.browser_vision.routable is true");
+    expect(source).toContain("structured_content.images");
     expect(source).toContain("capabilities.computer_use.routable is true");
     expect(source).toContain("mcp_extension_call_read");
     expect(source).toContain("mcp_extension_call_write");
