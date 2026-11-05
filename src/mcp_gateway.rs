@@ -460,6 +460,7 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
     let mut appsheet_api_tools = Vec::new();
     let mut browser_debug_tools = Vec::new();
     let mut browser_vision_tools = Vec::new();
+    let mut browser_visual_observation_tools = Vec::new();
     let mut computer_tools = Vec::new();
     let mut desktop_control_tools = Vec::new();
     let mut desktop_control_has_screenshot = false;
@@ -542,6 +543,17 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
             browser_debug_tools.push(public_name.to_owned());
         }
         if chrome_devtools
+            && normalized.ends_with("__take_screenshot")
+            && tool
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.read_only_hint)
+                == Some(true)
+            && browser_visual_observation_tools.len() < MAX_CAPABILITY_TOOL_NAMES
+        {
+            browser_visual_observation_tools.push(public_name.to_owned());
+        }
+        if chrome_devtools
             && normalized.contains("__click_at")
             && browser_vision_tools.len() < MAX_CAPABILITY_TOOL_NAMES
         {
@@ -596,6 +608,10 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
         computer_backends.insert("desktop-control");
     }
 
+    let has_browser_visual_observation = !browser_visual_observation_tools.is_empty();
+    let browser_vision_routable =
+        has_browser_visual_observation && !browser_vision_tools.is_empty();
+
     serde_json::json!({
         "apps_script": {
             "routable": !apps_script_tools.is_empty(),
@@ -621,9 +637,22 @@ pub fn extension_capability_summary(tools: &[Tool]) -> serde_json::Value {
             "backends": if browser_debug_tools.is_empty() { Vec::<&str>::new() } else { vec!["chrome-devtools"] },
             "tool_names": browser_debug_tools,
         },
+        // Screenshot observation can be available without coordinate-based
+        // browser input. Do not advertise the more powerful browser_vision
+        // capability unless a browser-scoped click-at backend really exists.
+        "browser_visual_observation": {
+            "routable": !browser_visual_observation_tools.is_empty(),
+            "backends": if browser_visual_observation_tools.is_empty() {
+                Vec::<&str>::new()
+            } else {
+                vec!["chrome-devtools-screenshot"]
+            },
+            "tool_names": browser_visual_observation_tools,
+            "scope": "selected-browser-page-inline-image-only",
+        },
         "browser_vision": {
-            "routable": !browser_vision_tools.is_empty(),
-            "backends": if browser_vision_tools.is_empty() { Vec::<&str>::new() } else { vec!["chrome-devtools-vision"] },
+            "routable": browser_vision_routable,
+            "backends": if browser_vision_routable { vec!["chrome-devtools-vision"] } else { Vec::<&str>::new() },
             "tool_names": browser_vision_tools,
             "scope": "browser-viewport-only",
         },
@@ -1345,6 +1374,55 @@ mod tests {
                 .expect("tool names array")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn browser_screenshot_is_observable_without_claiming_coordinate_vision() {
+        let mut screenshot = tool(None);
+        screenshot.extension_id = "chrome-devtools-mcp-6f0fffa".into();
+        screenshot.public_name = "chrome-devtools-mcp-6f0fffa__take_screenshot".into();
+        screenshot.original_name = "take_screenshot".into();
+        let exposed = public_tool(&screenshot).expect("Chrome screenshot tool");
+        assert_eq!(
+            exposed
+                .annotations
+                .as_ref()
+                .and_then(|value| value.read_only_hint),
+            Some(true)
+        );
+        let summary = extension_capability_summary(&[exposed]);
+        assert_eq!(summary["browser_visual_observation"]["routable"], true);
+        assert_eq!(
+            summary["browser_visual_observation"]["tool_names"][0],
+            "chrome-devtools-mcp-6f0fffa__take_screenshot"
+        );
+        assert_eq!(
+            summary["browser_visual_observation"]["scope"],
+            "selected-browser-page-inline-image-only"
+        );
+        assert_eq!(summary["browser_vision"]["routable"], false);
+        assert_eq!(summary["computer_use"]["routable"], false);
+    }
+
+    #[test]
+    fn browser_vision_requires_both_screenshot_and_coordinate_control() {
+        let mut click = tool(Some(false));
+        click.extension_id = "chrome-devtools-mcp-6f0fffa".into();
+        click.public_name = "chrome-devtools-mcp-6f0fffa__click_at".into();
+        click.original_name = "click_at".into();
+        let click_tool = public_tool(&click).expect("coordinate tool");
+        let without_screenshot = extension_capability_summary(&[click_tool.clone()]);
+        assert_eq!(without_screenshot["browser_vision"]["routable"], false);
+
+        let mut screenshot = tool(None);
+        screenshot.extension_id = "chrome-devtools-mcp-6f0fffa".into();
+        screenshot.public_name = "chrome-devtools-mcp-6f0fffa__take_screenshot".into();
+        screenshot.original_name = "take_screenshot".into();
+        let with_screenshot = extension_capability_summary(&[
+            click_tool,
+            public_tool(&screenshot).expect("image observation tool"),
+        ]);
+        assert_eq!(with_screenshot["browser_vision"]["routable"], true);
     }
 
     #[test]

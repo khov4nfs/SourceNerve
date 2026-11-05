@@ -508,6 +508,13 @@ async fn bridge_catalog(State(state): State<AppState>) -> AppResult<Json<BridgeC
     }))
 }
 
+// The stable JSON bridge cannot transport raw MCP ContentBlock variants.
+// Preserve a small number of inline raster images as structured data without
+// accepting paths or fetching external URLs. Never echo unbounded image data.
+const MAX_BRIDGE_IMAGE_BASE64_CHARS: usize = 4 * 1024 * 1024;
+const MAX_BRIDGE_TOTAL_IMAGE_BASE64_CHARS: usize = 6 * 1024 * 1024;
+const MAX_BRIDGE_IMAGES: usize = 2;
+
 fn bridge_http_value(response: CallToolResponse) -> serde_json::Value {
     match response {
         CallToolResponse::Complete(result) => {
@@ -516,10 +523,64 @@ fn bridge_http_value(response: CallToolResponse) -> serde_json::Value {
                 .iter()
                 .find_map(ContentBlock::as_text)
                 .map(|value| value.text.clone());
+            let mut structured_content = result.structured_content;
+            let mut images = Vec::new();
+            let mut image_chars = 0usize;
+            let mut images_omitted = false;
+
+            if result.is_error != Some(true) {
+                for image in result.content.iter().filter_map(ContentBlock::as_image) {
+                    let allowed_mime = matches!(
+                        image.mime_type.as_str(),
+                        "image/png" | "image/jpeg" | "image/webp"
+                    );
+                    if !allowed_mime
+                        || image.data.is_empty()
+                        || image.data.len() > MAX_BRIDGE_IMAGE_BASE64_CHARS
+                        || images.len() >= MAX_BRIDGE_IMAGES
+                        || image_chars.saturating_add(image.data.len())
+                            > MAX_BRIDGE_TOTAL_IMAGE_BASE64_CHARS
+                    {
+                        images_omitted = true;
+                        continue;
+                    }
+                    image_chars += image.data.len();
+                    images.push(serde_json::json!({
+                        "type": "image",
+                        "mimeType": image.mime_type,
+                        "data": image.data,
+                    }));
+                }
+            }
+
+            if !images.is_empty() || images_omitted {
+                // Retain the downstream structured metadata exactly when it
+                // is an object. Other valid JSON values are carried in value.
+                let mut fields = match structured_content.take() {
+                    Some(serde_json::Value::Object(fields)) if !fields.contains_key("images") => {
+                        fields
+                    }
+                    other => {
+                        let mut fields = serde_json::Map::new();
+                        if let Some(value) = other {
+                            fields.insert("value".into(), value);
+                        }
+                        fields
+                    }
+                };
+                if !images.is_empty() {
+                    fields.insert("images".into(), serde_json::Value::Array(images));
+                }
+                if images_omitted {
+                    fields.insert("images_omitted".into(), serde_json::Value::Bool(true));
+                }
+                structured_content = Some(serde_json::Value::Object(fields));
+            }
+
             serde_json::json!({
                 "is_error": result.is_error.unwrap_or(false),
                 "text": text,
-                "structured_content": result.structured_content
+                "structured_content": structured_content
             })
         }
         _ => serde_json::json!({
@@ -588,6 +649,86 @@ mod tests {
 
     use super::*;
     use crate::{db, service::AppState, workspace::WorkspaceRegistry};
+
+    #[test]
+    fn inline_raster_images_are_preserved_without_losing_metadata() {
+        let mut result = rmcp::model::CallToolResult::success(vec![
+            ContentBlock::image("aGVsbG8=", "image/png"),
+            ContentBlock::text("Screenshot captured"),
+        ]);
+        result.structured_content = Some(serde_json::json!({
+            "status": "completed", "result": {"sourceId": "browser-viewport"}
+        }));
+        let payload = bridge_http_value(result.into());
+        assert_eq!(payload["is_error"], false);
+        assert_eq!(payload["text"], "Screenshot captured");
+        assert_eq!(payload["structured_content"]["status"], "completed");
+        assert_eq!(
+            payload["structured_content"]["result"]["sourceId"],
+            "browser-viewport"
+        );
+        assert_eq!(
+            payload["structured_content"]["images"][0],
+            serde_json::json!({
+                "type": "image", "mimeType": "image/png", "data": "aGVsbG8="
+            })
+        );
+    }
+
+    #[test]
+    fn image_only_bridge_response_retains_inline_data() {
+        let result = rmcp::model::CallToolResult::success(vec![ContentBlock::image(
+            "aGVsbG8=",
+            "image/webp",
+        )]);
+        let payload = bridge_http_value(result.into());
+        assert_eq!(
+            payload["structured_content"]["images"][0]["mimeType"],
+            "image/webp"
+        );
+        assert_eq!(
+            payload["structured_content"]["images"][0]["data"],
+            "aGVsbG8="
+        );
+    }
+
+    #[test]
+    fn bridge_drops_oversized_or_non_raster_images_and_never_echoes_error_image() {
+        let oversized = "A".repeat(MAX_BRIDGE_IMAGE_BASE64_CHARS + 1);
+        let result = rmcp::model::CallToolResult::success(vec![
+            ContentBlock::image(&oversized, "image/png"),
+            ContentBlock::image("PHN2Zz4=", "image/svg+xml"),
+        ]);
+        let payload = bridge_http_value(result.into());
+        assert_eq!(payload["structured_content"]["images_omitted"], true);
+        assert!(payload["structured_content"]["images"].is_null());
+        assert!(!payload.to_string().contains(&oversized));
+
+        let error =
+            rmcp::model::CallToolResult::error(vec![ContentBlock::image("aGVsbG8=", "image/png")]);
+        let payload = bridge_http_value(error.into());
+        assert_eq!(payload["is_error"], true);
+        assert!(payload["structured_content"].is_null());
+        assert!(!payload.to_string().contains("aGVsbG8="));
+    }
+
+    #[test]
+    fn bridge_preserves_existing_structured_images_field_without_clobbering() {
+        let mut result = rmcp::model::CallToolResult::success(vec![ContentBlock::image(
+            "aGVsbG8=",
+            "image/jpeg",
+        )]);
+        result.structured_content = Some(serde_json::json!({"images": ["provider-data"]}));
+        let payload = bridge_http_value(result.into());
+        assert_eq!(
+            payload["structured_content"]["value"]["images"][0],
+            "provider-data"
+        );
+        assert_eq!(
+            payload["structured_content"]["images"][0]["mimeType"],
+            "image/jpeg"
+        );
+    }
 
     #[derive(Clone)]
     struct FakeMemoryMcp {
