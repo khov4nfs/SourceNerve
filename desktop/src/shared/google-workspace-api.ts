@@ -34,7 +34,7 @@ export interface AppsScriptContainerListInput extends AppsScriptProjectListInput
 export interface AppsScriptContainerSummary {
   containerId: string;
   name: string;
-  kind: "sheet" | "doc";
+  kind: "sheet" | "doc" | "slide" | "form";
   modifiedTime: string | null;
   editorUrl: string;
 }
@@ -50,6 +50,14 @@ export interface AppsScriptBoundCheck {
   scriptTitle: string | null;
   editorUrl: string;
   match: "verified" | "mismatch" | "unconfirmed";
+}
+export interface AppsScriptResolvedReference {
+  scriptId: string;
+  scriptTitle: string | null;
+  modifiedTime: string | null;
+  editorUrl: string;
+  containerId: string | null;
+  match: "verified" | "mismatch" | "unconfirmed" | null;
 }
 export interface AppsScriptFile {
   name: string;
@@ -144,6 +152,7 @@ export interface GoogleWorkspaceApi {
   enableProjectDiscovery(): Promise<DesktopResult<GoogleWorkspaceStatus>>;
   listProjects(input?: AppsScriptProjectListInput): Promise<DesktopResult<AppsScriptProjectList>>;
   listContainers(input?: AppsScriptContainerListInput): Promise<DesktopResult<AppsScriptContainerList>>;
+  resolveScriptReference(reference: string, containerId?: string): Promise<DesktopResult<AppsScriptResolvedReference>>;
   checkBoundScript(scriptId: string, containerId: string): Promise<DesktopResult<AppsScriptBoundCheck>>;
   scriptProject(scriptId: string): Promise<DesktopResult<Record<string, unknown>>>;
   scriptContent(scriptId: string): Promise<DesktopResult<AppsScriptContent>>;
@@ -167,6 +176,7 @@ export const GOOGLE_WORKSPACE_IPC = {
   enableProjectDiscovery: "desktop:google-workspace-enable-discovery",
   listProjects: "desktop:google-workspace-list-projects",
   listContainers: "desktop:google-workspace-list-containers",
+  resolveScriptReference: "desktop:google-workspace-resolve-script-reference",
   checkBoundScript: "desktop:google-workspace-check-bound-script",
   scriptProject: "desktop:google-workspace-script-project",
   scriptContent: "desktop:google-workspace-script-content",

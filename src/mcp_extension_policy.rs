@@ -124,6 +124,7 @@ pub fn complete_known_google_workspace_classification(
         "google-workspace__apps_script_list_projects"
             | "google-workspace__apps_script_list_containers"
             | "google-workspace__apps_script_check_bound"
+            | "google-workspace__apps_script_resolve_reference"
             | "google-workspace__apps_script_patch_preview"
             | "google-workspace__apps_script_comment_preview"
             | "google-workspace__apps_script_get_project"
@@ -526,6 +527,7 @@ mod tests {
             "google-workspace__apps_script_list_projects",
             "google-workspace__apps_script_list_containers",
             "google-workspace__apps_script_check_bound",
+            "google-workspace__apps_script_resolve_reference",
             "google-workspace__apps_script_patch_preview",
             "google-workspace__apps_script_comment_preview",
             "google-workspace__apps_script_get_project",

@@ -35,6 +35,7 @@ describe("Google Workspace first-party MCP gateway", () => {
         { original_name: "apps_script_list_projects" },
         { original_name: "apps_script_list_containers" },
         { original_name: "apps_script_check_bound" },
+        { original_name: "apps_script_resolve_reference" },
         { original_name: "apps_script_patch_preview" },
         { original_name: "apps_script_patch_apply" },
         { original_name: "apps_script_comment_preview" },
@@ -96,6 +97,14 @@ describe("Google Workspace first-party MCP gateway", () => {
         editorUrl: "https://script.google.com/d/abcdefghijklmnopqrstuvwxy1234567890/edit",
         match: "verified",
       })),
+      resolveAppsScriptReference: vi.fn(async () => ({
+        scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
+        scriptTitle: "PMT Script",
+        modifiedTime: "2026-11-05T01:02:03Z",
+        editorUrl: "https://script.google.com/d/abcdefghijklmnopqrstuvwxy1234567890/edit",
+        containerId: "document0123456789abcdefgh",
+        match: "verified",
+      })),
       listAppsScriptProjects: vi.fn(async () => ({
         projects: [{
           scriptId: "abcdefghijklmnopqrstuvwxy1234567890",
@@ -119,6 +128,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(policies.find((p) => p.toolName === "apps_script_list_projects")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_list_containers")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_check_bound")?.approval).toBe("automatic");
+      expect(policies.find((p) => p.toolName === "apps_script_resolve_reference")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_patch_preview")?.approval).toBe("automatic");
       expect(policies.find((p) => p.toolName === "apps_script_patch_apply")?.approval).toBe("ask");
       expect(policies.find((p) => p.toolName === "apps_script_comment_preview")?.approval).toBe("automatic");
@@ -141,6 +151,7 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_projects")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_list_containers")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_check_bound")).toBe(true);
+      expect(catalog.result.tools.some((tool) => tool.name === "apps_script_resolve_reference")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_patch_preview")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_patch_apply")).toBe(true);
       expect(catalog.result.tools.some((tool) => tool.name === "apps_script_comment_preview")).toBe(true);
@@ -190,6 +201,29 @@ describe("Google Workspace first-party MCP gateway", () => {
       expect(manager.checkBoundAppsScript).toHaveBeenCalledWith(
         "abcdefghijklmnopqrstuvwxy1234567890", "document0123456789abcdefgh",
       );
+
+      const editorReference = "https://script.google.com/home/projects/abcdefghijklmnopqrstuvwxy1234567890/edit";
+      const resolved = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_resolve_reference",
+        arguments: { reference: editorReference, containerId: "document0123456789abcdefgh" },
+      });
+      const referencePayload = await resolved.json() as {
+        result: { structuredContent: { scriptId: string; match: string; modifiedTime: string } };
+      };
+      expect(referencePayload.result.structuredContent.scriptId).toBe("abcdefghijklmnopqrstuvwxy1234567890");
+      expect(referencePayload.result.structuredContent.modifiedTime).toBe("2026-11-05T01:02:03Z");
+      expect(referencePayload.result.structuredContent.match).toBe("verified");
+      expect(manager.resolveAppsScriptReference).toHaveBeenCalledWith(
+        editorReference, "document0123456789abcdefgh",
+      );
+
+      const invalid = await send(`Bearer ${credential}`, "tools/call", {
+        name: "apps_script_resolve_reference",
+        arguments: { reference: "" },
+      });
+      const invalidPayload = await invalid.json() as { result: { isError: boolean } };
+      expect(invalidPayload.result.isError).toBe(true);
+      expect(manager.resolveAppsScriptReference).toHaveBeenCalledTimes(1);
 
       const scriptId = "abcdefghijklmnopqrstuvwxy1234567890";
       const preview = await send(`Bearer ${credential}`, "tools/call", {
