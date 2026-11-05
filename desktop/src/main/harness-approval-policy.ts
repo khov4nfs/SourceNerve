@@ -28,7 +28,8 @@ function isListInput(value: unknown): value is DesktopHarnessApprovalListInput {
 function isRespondInput(value: unknown): value is DesktopHarnessApprovalRespondInput {
   if (!isRecord(value)) return false;
   if (Object.keys(value).some((key) => !["approvalId", "decision"].includes(key))) return false;
-  return boundedId(value.approvalId) && (value.decision === "allow" || value.decision === "deny");
+  return boundedId(value.approvalId) &&
+    (value.decision === "allow" || value.decision === "allow_run" || value.decision === "deny");
 }
 
 function boundedId(value: unknown): value is string {

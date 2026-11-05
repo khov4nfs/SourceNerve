@@ -1667,6 +1667,15 @@ export function HarnessConversationPanel({
   }
 
   async function respondToApproval(approval: DesktopHarnessApprovalView, decision: HarnessApprovalDecision): Promise<void> {
+    if (decision === "allow_run") {
+      if (approval.canAllowRun !== true) return;
+      const confirmed = window.confirm(
+        `Allow ${approval.tool} for this Harness run?\n\n` +
+        `Workspace: ${approval.workspace}\nRun: ${approval.runId}\n\n` +
+        "Up to 12 executions of this exact tool within 5 minutes. Each call still checks identity, run, workspace, capability, HEAD and policy. Push, merge, shell escalation and sensitive actions require separate approval.",
+      );
+      if (!confirmed) return;
+    }
     setApprovalBusy(approval.id);
     setError(null);
     const result = await window.sourcenerveDesktop.respondHarnessApproval({
@@ -1678,10 +1687,12 @@ export function HarnessConversationPanel({
     } else {
       setApprovals((current) => current.filter((item) => item.id !== approval.id));
       await onChanged();
-      if (decision === "allow" && chatGptDirectAgentActive) {
-        setWorkspaceNotice("Approval granted. ChatGPT will continue the pending action automatically.");
+      if ((decision === "allow" || decision === "allow_run") && chatGptDirectAgentActive) {
+        setWorkspaceNotice(decision === "allow_run"
+          ? "Scoped approval granted for this tool and run (up to 12 uses / 5 min). ChatGPT will continue the pending action."
+          : "Approval granted. ChatGPT will continue the pending action automatically.");
         setApprovalContinuationPrompt(
-          `Approval granted for the pending SourceNerve action ${approval.tool}. Retry only that exact previously blocked action, then continue the original task from where you stopped. Do not repeat side effects that already completed.`,
+          `Approval granted for the pending SourceNerve action ${approval.tool}. ${decision === "allow_run" ? "The same tool can run up to 12 times in this run within 5 minutes when HEAD and policy remain unchanged." : "This is one exact approval."} Retry only that exact previously blocked action, then continue the original task from where you stopped. Do not repeat side effects that already completed.`,
         );
       }
     }
@@ -2211,7 +2222,7 @@ export function HarnessConversationPanel({
             <div ref={approvalPanelRef} id="pending-harness-approvals" className="space-y-3 rounded-[14px] border border-warning/35 bg-warning/5 p-4" role="status" aria-label="Pending Harness approvals">
               <div>
                 <p className="text-sm font-semibold text-foreground">ChatGPT needs your approval</p>
-                <p className="mt-1 text-xs text-muted-foreground">This is a waiting step, not a failed turn. The approval is scoped to the exact pending action.</p>
+                <p className="mt-1 text-xs text-muted-foreground">This is a waiting step, not a failed turn. Allow once approves an exact action; eligible tools also offer bounded approval for this run.</p>
               </div>
               {approvals.map((approval) => (
                 <article key={approval.id} className="rounded-[10px] border border-border bg-card p-3">
@@ -2223,6 +2234,9 @@ export function HarnessConversationPanel({
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <ActionButton onClick={() => void respondToApproval(approval, "allow")} disabled={approvalBusy !== null}>{chatGptDirectAgentActive ? "Allow & continue" : "Allow once"}</ActionButton>
+                    {approval.canAllowRun === true ? (
+                      <ActionButton variant="secondary" onClick={() => void respondToApproval(approval, "allow_run")} disabled={approvalBusy !== null}>Allow for run (12 uses / 5 min)</ActionButton>
+                    ) : null}
                     <ActionButton variant="secondary" onClick={() => void respondToApproval(approval, "deny")} disabled={approvalBusy !== null}>Deny</ActionButton>
                   </div>
                 </article>

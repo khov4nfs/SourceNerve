@@ -9,9 +9,16 @@ scope, active MCP policy, Git review gates, or raw shell sandbox boundaries.
 | Decision | Applies to | Boundaries |
 | --- | --- | --- |
 | `allow` | Any pending Harness or MCP action | Original exact one-shot behavior; argument hash must match |
-| `allow_run` | Harness pending actions other than sensitive shell/native or destructive extension tools | Up to 12 calls, within 5 minutes of approval; same authenticated principal, Harness run, workspace, tool, capability, Git HEAD |
+| `allow_run` | Eligible first-party Harness operations only (not provider or MCP extension mutations) | Up to 12 calls, within 5 minutes of approval; same authenticated principal, Harness run, workspace, tool, capability, Git HEAD |
 | `allow_tool` | Eligible MCP extension actions | Up to 12 calls, within 2 minutes; same authenticated principal and public tool; also same resource ID where exposed |
 | `deny` | Any pending action | No execution |
+
+`allow_run` uses a **positive allowlist** of reviewed first-party
+operations: `workspace_file_write`, `workspace_file_put`, `patch_apply`,
+`task_apply_patch`, `git_branch_checkout`, `task_branch_checkout`,
+`git_commit` and `task_git_commit`. New or unknown tools remain exact-only
+until reviewed. Remote provider actions and MCP extensions are not on this
+allowlist.
 
 The user must **explicitly** choose `allow_run` or `allow_tool`.
 Never silently upgrade `allow`; approvals cannot change an effective `deny`.
@@ -26,6 +33,26 @@ paths instead of storing plaintext identifiers in approval caches.
 Chrome DevTools screenshot/snapshot, network inspection and wait-for operations
 have read-only classification when their downstream metadata does not
 contradict that status. Interactive browser mutations still follow MCP policy.
+
+## Desktop and long-running ChatGPT sessions
+
+The Desktop Harness approval view and inline ChatGPT/Codex panel now offer an
+explicit **Allow for run (12 uses / 5 min)** action only when the daemon reports
+`can_allow_run=true`. Clicking it requires a second confirmation of the exact
+run/workspace/HEAD and scope. Existing `Allow once` and `Deny` remain unchanged.
+The server, not Desktop, decides if a particular tool is eligible. Native OS
+approvals, privileged commands, Git push/merge and public PR/issue creation
+remain exact one-shot. Dynamic MCP extension tools use the separate resource-bounded `allow_tool` flow, not `allow_run`. No such broad grant is implied from the original task
+request.
+
+Ordinary *pending* approval requests may remain available for **12 hours** to
+accommodate human review that spans multiple chat turns. Native permission prompts and raw shell/process execution
+approvals continue to expire after 5 minutes. A pending request is **not**
+execution authority. After an explicit `allow` or `allow_run`, the grant
+expires after **5 minutes from the consent time**, even if the request was
+created hours earlier. The existing run, principal, workspace, capability,
+tool, argument digest (for exact consent), HEAD and policy checks remain
+mandatory.
 
 ## Avoiding duplicate approval
 
