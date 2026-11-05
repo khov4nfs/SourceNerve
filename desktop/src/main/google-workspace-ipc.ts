@@ -12,6 +12,7 @@ import {
   type GoogleScriptAccessMode,
 } from "../shared/google-workspace-api";
 import type { GoogleWorkspaceManager } from "./google-workspace-manager";
+import { parseAppsScriptReference } from "../shared/apps-script-reference";
 
 /**
  * Electron's trusted-renderer boundary is mandatory. These APIs are NOT
@@ -44,6 +45,9 @@ export function installGoogleWorkspaceIpcHandlers(context: GoogleWorkspaceIpcCon
           case GOOGLE_WORKSPACE_IPC.listContainers: return ok(await manager.listAppsScriptContainers(args[0] as {
             pageSize?: number; pageToken?: string; query?: string;
           }));
+          case GOOGLE_WORKSPACE_IPC.resolveScriptReference: return ok(await manager.resolveAppsScriptReference(
+            args[0] as string, args[1] as string | undefined,
+          ));
           case GOOGLE_WORKSPACE_IPC.checkBoundScript: return ok(await manager.checkBoundAppsScript(
             args[0] as string, args[1] as string,
           ));
@@ -106,6 +110,9 @@ export function validateGoogleWorkspaceIpc(channel: string, args: readonly unkno
         (options.query === undefined || (bounded(options.query, 1, 128) &&
           (options.query as string).trim().length > 0));
     }
+    case GOOGLE_WORKSPACE_IPC.resolveScriptReference:
+      return (args.length === 1 || args.length === 2) && parseAppsScriptReference(args[0]) !== null &&
+        (args.length === 1 || args[1] === undefined || scriptId(args[1]));
     case GOOGLE_WORKSPACE_IPC.checkBoundScript:
       return args.length === 2 && scriptId(args[0]) && scriptId(args[1]);
     case GOOGLE_WORKSPACE_IPC.configure:

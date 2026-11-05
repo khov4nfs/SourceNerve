@@ -4,6 +4,7 @@ import type {
   AppsScriptProjectSummary,
   AppsScriptContainerSummary,
   AppsScriptBoundCheck,
+  AppsScriptResolvedReference,
   AppsScriptCommentPreview,
   AppsScriptPatchPreview,
   AppsScriptTextEdit,
@@ -36,6 +37,8 @@ export function GoogleWorkspacePanel() {
   const [containerNextPageToken, setContainerNextPageToken] = useState<string | null>(null);
   const [containerId, setContainerId] = useState("");
   const [boundCheck, setBoundCheck] = useState<AppsScriptBoundCheck | null>(null);
+  const [scriptReference, setScriptReference] = useState("");
+  const [resolvedScripts, setResolvedScripts] = useState<AppsScriptResolvedReference[]>([]);
   const [scriptSummary, setScriptSummary] = useState("");
   const [patchFileName, setPatchFileName] = useState("");
   const [patchOperation, setPatchOperation] = useState<AppsScriptEditOperation>("replace_exact");
@@ -102,6 +105,10 @@ export function GoogleWorkspacePanel() {
     setContainers((previous) => pageToken
       ? [...previous, ...result.value.containers] : result.value.containers);
     setContainerNextPageToken(result.value.nextPageToken);
+    if (!pageToken) {
+      setContainerId("");
+      setResolvedScripts([]);
+    }
     setBoundCheck(null);
     setMessage(`Tìm thấy ${result.value.containers.length} tài liệu nguồn ứng viên trên trang này; chưa xác định tài liệu nào có Apps Script.`);
   }
@@ -147,6 +154,8 @@ export function GoogleWorkspacePanel() {
                 if (!response.ok) throw new Error(response.error.message);
                 setStatus(response.value);
                 setProjects([]);
+                setResolvedScripts([]);
+                setScriptReference("");
                 setContainers([]);
                 setContainerNextPageToken(null);
                 setContainerId("");
@@ -167,6 +176,8 @@ export function GoogleWorkspacePanel() {
                 // The next OAuth consent may select a different Google account.
                 // Never keep showing project metadata from the prior identity.
                 setProjects([]);
+                setResolvedScripts([]);
+                setScriptReference("");
                 setContainers([]);
                 setContainerNextPageToken(null);
                 setContainerId("");
@@ -185,6 +196,8 @@ export function GoogleWorkspacePanel() {
                 setStatus(response.value);
                 setScriptSummary("");
                 setProjects([]);
+                setResolvedScripts([]);
+                setScriptReference("");
                 setContainers([]);
                 setContainerNextPageToken(null);
                 setContainerId("");
@@ -215,6 +228,8 @@ export function GoogleWorkspacePanel() {
                   if (!enabled.ok) throw new Error(enabled.error.message);
                   setStatus(enabled.value);
                   setProjects([]);
+                setResolvedScripts([]);
+                setScriptReference("");
                   setContainers([]);
                   setContainerNextPageToken(null);
                   setContainerId("");
@@ -261,24 +276,31 @@ export function GoogleWorkspacePanel() {
             )}
           </div>
           <div className="rounded-lg border border-border p-3 space-y-2">
-            <p className="text-sm font-medium">Tìm Apps Script gắn với Google Sheets/Docs</p>
+            <p className="text-sm font-medium">Tìm Apps Script gắn với Sheets / Docs / Slides / Forms</p>
             <p className="text-xs text-muted-foreground">
-              Google không cung cấp API liệt kê Script ID gắn với tài liệu. Hãy tìm Sheet/Doc nguồn
-              bằng Drive metadata, mở tài liệu và chọn Extensions → Apps Script → Project Settings
-              để sao chép Script ID, sau đó đối chiếu bằng API bên dưới.
+              Google không cung cấp API liệt kê Script ID theo tài liệu nguồn. Hãy tìm tài liệu
+              bằng Drive metadata, mở Extensions → Apps Script (hoặc menu Apps Script của Forms)
+              và sao chép URL Editor trên thanh địa chỉ. Dán URL bên dưới để nhận diện dự án.
               Danh sách tài liệu nguồn không khẳng định có Apps Script.
             </p>
             <label className="block text-xs space-y-1">
               <span>Tìm tên tài liệu nguồn (tùy chọn)</span>
               <input aria-label="Search bound script container" className={fieldClass}
                 value={containerQuery} maxLength={128}
-                onChange={(event) => { setContainerQuery(event.target.value); setContainerNextPageToken(null); }}
-                placeholder="Tên Google Sheet hoặc Doc" />
+                onChange={(event) => {
+                  setContainerQuery(event.target.value);
+                  setContainerNextPageToken(null);
+                  setContainers([]);
+                  setContainerId("");
+                  setBoundCheck(null);
+                  setResolvedScripts([]);
+                }}
+                placeholder="Tên Google Sheet, Doc, Slide hoặc Form" />
             </label>
             <ActionButton size="sm" variant="secondary"
               disabled={Boolean(busy) || !status?.connected || !status.projectDiscoveryEnabled}
               onClick={() => void perform("containers-list", async () => { await fetchContainers(); })}>
-              Tìm Sheets/Docs ứng viên
+              Tìm tài liệu nguồn ứng viên
             </ActionButton>
             {containers.length > 0 && (
               <ul className="space-y-2">
@@ -287,10 +309,16 @@ export function GoogleWorkspacePanel() {
                     <a className="text-sm underline break-words" href={container.editorUrl}
                       target="_blank" rel="noopener noreferrer">{container.name}</a>
                     <p className="text-xs text-muted-foreground">
-                      {container.kind === "sheet" ? "Google Sheets" : "Google Docs"} · {container.modifiedTime ?? "Không rõ thời gian sửa"}
+                      {container.kind === "sheet" ? "Google Sheets" :
+                        container.kind === "doc" ? "Google Docs" :
+                        container.kind === "slide" ? "Google Slides" : "Google Forms"} · {container.modifiedTime ?? "Không rõ thời gian sửa"}
                     </p>
                     <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
-                      onClick={() => { setContainerId(container.containerId); setBoundCheck(null); }}>
+                      onClick={() => {
+                        setContainerId(container.containerId);
+                        setBoundCheck(null);
+                        setResolvedScripts([]);
+                      }}>
                       {containerId === container.containerId ? "Đã chọn tài liệu nguồn" : "Chọn tài liệu nguồn"}
                     </ActionButton>
                   </li>
@@ -301,7 +329,7 @@ export function GoogleWorkspacePanel() {
               <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
                 onClick={() => void perform("containers-more", async () => {
                   await fetchContainers(containerNextPageToken);
-                })}>Tải thêm Sheets/Docs</ActionButton>
+                })}>Tải thêm tài liệu nguồn</ActionButton>
             )}
             {containerId && (
               <div className="space-y-2">
@@ -327,6 +355,67 @@ export function GoogleWorkspacePanel() {
                   boundCheck.match === "mismatch" ? "Không khớp" : "Chưa xác minh"
                 }
               </p>
+            )}
+          </div>
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <p className="text-sm font-medium">Nhận diện Apps Script từ URL Editor</p>
+            <p className="text-xs text-muted-foreground">
+              Dán Script ID hoặc URL từ script.google.com/d/.../edit hay
+              script.google.com/home/projects/.../edit. SourceNerve chỉ trích ID
+              để đọc projects.get bằng OAuth hiện tại, không truy cập URL được dán.
+              Danh sách vừa nhận diện chỉ lưu trong phiên giao diện này.
+            </p>
+            <label className="block text-xs space-y-1">
+              <span>Script ID hoặc URL Apps Script Editor</span>
+              <input aria-label="Apps Script ID or editor URL" className={fieldClass}
+                maxLength={512} value={scriptReference}
+                onChange={(event) => setScriptReference(event.target.value)}
+                placeholder="https://script.google.com/home/projects/.../edit" />
+            </label>
+            <ActionButton size="sm" variant="secondary"
+              disabled={Boolean(busy) || !status?.connected || !scriptReference.trim()}
+              onClick={() => void perform("script-resolve", async () => {
+                const result = await api.resolveScriptReference(
+                  scriptReference.trim(), containerId || undefined,
+                );
+                if (!result.ok) throw new Error(result.error.message);
+                setScriptId(result.value.scriptId);
+                setBoundCheck(null);
+                setCommentPreview(null);
+                setPatchPreview(null);
+                setScriptSummary("");
+                setResolvedScripts((previous) => [
+                  result.value, ...previous.filter((item) => item.scriptId !== result.value.scriptId),
+                ].slice(0, 20));
+                setMessage(result.value.match === "verified"
+                  ? "Đã xác minh Apps Script gắn với tài liệu nguồn đã chọn."
+                  : result.value.match === "mismatch"
+                    ? "Script đã nhận diện, nhưng thuộc một container khác."
+                    : result.value.match === "unconfirmed"
+                      ? "Đã nhận diện Script ID; Google không trả parentId nên chưa xác minh được container."
+                      : "Đã nhận diện Script ID. Chọn tài liệu nguồn để đối chiếu liên kết.");
+              })}>Nhận diện và chọn project</ActionButton>
+            {resolvedScripts.length > 0 && (
+              <ul className="space-y-2">
+                {resolvedScripts.map((project) => (
+                  <li className="rounded border border-border p-2 space-y-1" key={project.scriptId}>
+                    <a className="text-sm underline break-words" href={project.editorUrl}
+                      target="_blank" rel="noopener noreferrer">{project.scriptTitle || "Apps Script"}</a>
+                    <p className="text-xs text-muted-foreground break-all">Script ID: {project.scriptId}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Cập nhật: {project.modifiedTime ?? "Không có dữ liệu"} · {
+                        project.match === "verified" ? "Đã xác minh container" :
+                        project.match === "mismatch" ? "Container không khớp" :
+                        project.match === "unconfirmed" ? "Chưa xác minh container" :
+                        "Chưa đối chiếu container"}
+                    </p>
+                    <ActionButton size="sm" variant="secondary" disabled={Boolean(busy)}
+                      onClick={() => { setScriptId(project.scriptId); setBoundCheck(null); }}>
+                      Chọn Script ID
+                    </ActionButton>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
           <label className="block text-xs space-y-1">

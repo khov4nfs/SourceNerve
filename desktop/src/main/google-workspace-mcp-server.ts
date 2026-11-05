@@ -15,6 +15,7 @@ type ToolName =
   | "google_workspace_status"
   | "apps_script_list_projects"
   | "apps_script_list_containers"
+  | "apps_script_resolve_reference"
   | "apps_script_check_bound"
   | "apps_script_get_project"
   | "apps_script_get_content"
@@ -56,12 +57,16 @@ const TOOL_DEFINITIONS: Definition[] = [
     pageSize: { type: "integer", minimum: 1, maximum: 100 },
     pageToken: { type: "string", minLength: 1, maxLength: 4096 },
   }, [], false),
-  definition("apps_script_list_containers", "Find candidate Google Sheets/Docs containers using read-only Drive metadata. This does NOT enumerate container-bound script IDs; obtain the Script ID from the editor to verify linkage.", {
+  definition("apps_script_list_containers", "Find candidate Google Sheets, Docs, Slides or Forms containers using read-only Drive metadata. Does NOT enumerate container-bound script IDs.", {
     pageSize: { type: "integer", minimum: 1, maximum: 100 },
     pageToken: { type: "string", minLength: 1, maxLength: 4096 },
     query: { type: "string", minLength: 1, maxLength: 128 },
   }, [], false),
-  definition("apps_script_check_bound", "Check whether one known Script ID is bound to a selected Sheet/Doc ID by reading Apps Script projects.get; parentId can be absent and returns unconfirmed.", {
+  definition("apps_script_resolve_reference", "Resolve a user-provided Apps Script project ID or official Editor URL via read-only projects.get. Optionally compare with a container ID, returning verified/mismatch/unconfirmed; never fetch supplied URLs or source code.", {
+    reference: { type: "string", minLength: 12, maxLength: 512 },
+    containerId: SCRIPT_ID,
+  }, ["reference"], false),
+  definition("apps_script_check_bound", "Check whether one known Script ID is bound to a selected Google Workspace container by reading Apps Script projects.get; absent parentId is unconfirmed.", {
     scriptId: SCRIPT_ID,
     containerId: SCRIPT_ID,
   }, ["scriptId", "containerId"], false),
@@ -284,6 +289,10 @@ export class GoogleWorkspaceMcpServer {
         ...(args.pageToken === undefined ? {} : { pageToken: requiredString(args.pageToken, "pageToken", 4096) }),
         ...(args.query === undefined ? {} : { query: requiredString(args.query, "query", 128) }),
       });
+      case "apps_script_resolve_reference": return this.manager.resolveAppsScriptReference(
+        requiredString(args.reference, "reference", 512),
+        args.containerId === undefined ? undefined : requiredString(args.containerId, "containerId", 160),
+      );
       case "apps_script_check_bound": return this.manager.checkBoundAppsScript(
         requiredString(args.scriptId, "scriptId", 160),
         requiredString(args.containerId, "containerId", 160),

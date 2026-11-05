@@ -46,20 +46,27 @@ Kết quả ví dụ **minh họa, không phải dữ liệu thật**:
 }
 ```
 
-## Tìm script gắn với Sheets/Docs (container-bound)
+## Tìm script gắn với Sheets/Docs/Slides/Forms (container-bound)
 
-Google không có API công khai liệt kê Script ID *theo* Sheet/Doc. Bound scripts không hiện như file Apps Script riêng lẻ trong Drive. Vì vậy SourceNerve **không khẳng định tự tìm ra Script ID** từ tên hoặc ID của spreadsheet/document.
+Google không có API công khai liệt kê Script ID *theo* Sheet/Doc/Slide/Form. Bound scripts không hiện như file Apps Script riêng lẻ trong Drive. Vì vậy SourceNerve **không khẳng định tự tìm ra Script ID** từ tên hoặc ID của container.
 
-Hai công cụ đọc bổ sung, đều dùng token OAuth first-party đã được cấp:
+Ba công cụ đọc bổ sung, đều dùng token OAuth first-party đã được cấp:
 
-1. `google-workspace__apps_script_list_containers`: lọc các **Sheets/Docs ứng viên** theo tên (tuỳ chọn `query`, tối đa 128 ký tự), `pageSize` 1..100 và `pageToken`. Chỉ dùng Drive `files.list` với MIME của Google Sheets và Google Docs, `fields=id,name,mimeType,modifiedTime`; kết quả có `containers`, `nextPageToken`, `incompleteSearch` và `scriptsEnumerated:false`. Mục `containerId/name/kind/modifiedTime/editorUrl` không có trường `scriptId`, không có bằng chứng tài liệu chứa script.
-2. `google-workspace__apps_script_check_bound`: người dùng cung cấp **Script ID thực** và chọn `containerId` ứng viên. SourceNerve gọi Apps Script `projects.get(scriptId)` bằng scope đọc hiện có, trả `match:` `verified` nếu `parentId` trùng, `mismatch` nếu Google trả một `parentId` hợp lệ khác, hoặc `unconfirmed` khi Google không cung cấp `parentId`. Không đoán mối liên kết dựa trên tên người sở hữu, tiêu đề hoặc việc cả hai cùng tồn tại trên Drive. Kết quả loại bỏ các trường creator/email/permissions của response.
-3. Để lấy Script ID cho tài liệu nguồn: mở Sheet/Doc → **Extensions → Apps Script → Project Settings** → sao chép Script ID, sau đó dùng nút đối chiếu trong SourceNerve Desktop hoặc gọi MCP. Cũng có thể dùng một Script ID đã biết từ nguồn đã được người dùng cung cấp. Không dùng Apps Script API `projects.create` chỉ để thử đoán (vì sẽ tạo dữ liệu thật).
+1. `google-workspace__apps_script_list_containers`: tìm các **Sheets/Docs/Slides/Forms ứng viên** theo tên (tuỳ chọn `query`, tối đa 128 ký tự), `pageSize` 1..100 và `pageToken`. Chỉ dùng Drive `files.list` với bốn MIME tương ứng và `fields=id,name,mimeType,modifiedTime`; kết quả có `containers`, `nextPageToken`, `incompleteSearch` và `scriptsEnumerated:false`. Các mục `containerId/name/kind/modifiedTime/editorUrl` **không** chứa `scriptId` và không chứng minh tài liệu có script.
+2. `google-workspace__apps_script_resolve_reference`: nhận **Script ID thật hoặc URL Apps Script Editor chính thức** (`https://script.google.com/d/{scriptId}/edit` hoặc `https://script.google.com/home/projects/{scriptId}/edit`). Desktop chỉ trích ID đã kiểm tra, sau đó gọi **GET `https://script.googleapis.com/v1/projects/{scriptId}`** bằng OAuth có sẵn; **không bao giờ fetch URL dán vào**. Kết quả trả `scriptId`, `scriptTitle`, `modifiedTime`, `editorUrl`, `containerId` (nếu chọn) và `match` (`verified`/`mismatch`/`unconfirmed`/`null`). Không công bố owner, email, quyền chia sẻ hoặc dữ liệu thô từ Google. Đây là *nhận diện một dự án đã biết*, không phải liệt kê ngược các bound scripts.
+3. `google-workspace__apps_script_check_bound`: nhận **Script ID thật** và `containerId`, gọi Apps Script `projects.get(scriptId)`. `match` là `verified` khi `parentId` trùng, `mismatch` khi Google trả một `parentId` hợp lệ khác, hoặc `unconfirmed` khi Google không cung cấp `parentId`. Không đoán mối liên kết theo tiêu đề dự án hoặc theo tên người sở hữu.
+
+**Cách dùng trong Desktop:** mở tài liệu nguồn → mở **Extensions → Apps Script** (hoặc menu Apps Script của Forms) → sao chép URL của Apps Script Editor từ thanh địa chỉ hoặc Script ID trong Project Settings → dán vào phần **Nhận diện Apps Script qua URL Editor**. Có thể chọn container trước để so khớp `parentId`. Việc này không tạo hay sửa project. **Không** dùng `projects.create` để thử dò ID.
+
 
 Ví dụ gọi MCP read (metadata-only):
 
 ```json
 {"public_tool":"google-workspace__apps_script_list_containers","arguments":{"pageSize":30,"query":"PMT"}}
+```
+
+```json
+{"public_tool":"google-workspace__apps_script_resolve_reference","arguments":{"reference":"https://script.google.com/home/projects/abcdefghijklmnopqrstuvwxyz0123456789/edit","containerId":"1sheetDocumentIdLongEnough"}}
 ```
 
 ```json
@@ -70,16 +77,16 @@ Browser use có thể hỗ trợ người dùng mở trang Editor để **xem v�
 
 ### Phân loại read / preview
 
-SourceNerve chỉ sửa phân loại cho các tên công cụ quan sát đã được kiểm chứng, ví dụ Chrome DevTools `take_snapshot`, `take_screenshot` **không có `filePath`**; và Google Workspace first-party `apps_script_patch_preview`, `apps_script_comment_preview`, cùng hai công cụ bound-script trên. Chrome DevTools `take_heapsnapshot` luôn đi qua write dispatcher vì bắt buộc ghi file; `take_snapshot`/`take_screenshot` với `filePath` bị chặn khi gọi qua SourceNerve. Các công cụ có thể ghi (`apply`, `update`, `create`, `navigate`, `evaluate_script`) vẫn đi qua write dispatcher và giữ nguyên per-tool approval. Dù được phân loại read-only, một công cụ đã cấu hình `Ask` ở Desktop vẫn cần approval; classifier không tự cấp quyền.
+SourceNerve chỉ sửa phân loại cho các tên công cụ quan sát đã được kiểm chứng, ví dụ Chrome DevTools `take_snapshot`, `take_screenshot` **không có `filePath`**; và Google Workspace first-party `apps_script_patch_preview`, `apps_script_comment_preview`, cùng ba công cụ bound-script trên. Chrome DevTools `take_heapsnapshot` luôn đi qua write dispatcher vì bắt buộc ghi file; `take_snapshot`/`take_screenshot` với `filePath` bị chặn khi gọi qua SourceNerve. Các công cụ có thể ghi (`apply`, `update`, `create`, `navigate`, `evaluate_script`) vẫn đi qua write dispatcher và giữ nguyên per-tool approval. Dù được phân loại read-only, một công cụ đã cấu hình `Ask` ở Desktop vẫn cần approval; classifier không tự cấp quyền.
 
 ### Ranh giới bảo mật
 
-- Gọi **duy nhất** `GET https://www.googleapis.com/drive/v3/files` với `q=mimeType = 'application/vnd.google-apps.script' and trashed = false`, `corpora=user`, `spaces=drive`, `fields=nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)`, `orderBy=modifiedTime desc`. Không đọc file content, permissions, owner emails hay download link.
+- Drive discovery chỉ gọi **GET `https://www.googleapis.com/drive/v3/files`**, lọc MIME standalone Apps Script hoặc Sheets/Docs/Slides/Forms, với `corpora=user`, `spaces=drive`, `fields=nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime)`, `orderBy=modifiedTime desc`. Không đọc file content, permissions, owner emails hay download link.
 - Query string do code cố định xây dựng bằng `URLSearchParams`; `pageToken` luôn được encode và giới hạn 4096 ký tự. Không nhận URL bất kỳ từ ChatGPT hoặc trả metadata ngoài danh sách trường đã chọn.
 - `editorUrl` được xây dựng từ Script ID đã kiểm tra định dạng, theo định dạng chính thức `https://script.google.com/d/{scriptId}/edit`; không tái sử dụng URL do API trả về.
 - Google access/refresh token nằm trong OS secure store (Main) và bộ nhớ thực thi HTTPS; không xuất hiện trong MCP tool results, UI, GitHub, .env hay shell.
-- `apps_script_list_projects` là công cụ read-only (MCP read dispatcher). Các tool sửa nội dung/version/deployment vẫn chịu chính sách `Ask` như trước.
+- `apps_script_list_projects`, `apps_script_list_containers`, `apps_script_resolve_reference` và `apps_script_check_bound` là các công cụ read-only (MCP read dispatcher). Các tool sửa nội dung/version/deployment vẫn chịu chính sách `Ask` như trước.
 - Khi Google trả 401/403, kiểm tra API đã được bật, tài khoản Google và scope trong consent; không tự nâng quyền hoặc thử dùng scope toàn Drive.
-- Kết quả thực tế chỉ khả dụng **sau khi merge, cài lại SourceNerve Desktop và người dùng thực hiện OAuth re-consent**. PR hoặc kiểm thử mock không xác nhận đã có dữ liệu dự án thật.
+- Chức năng mới chỉ khả dụng **sau khi merge và cài lại SourceNerve Desktop**. Khi đã có Google Apps Script OAuth, nhận diện bằng Script ID/Editor URL không đòi scope Drive mới; tìm tài liệu nguồn qua Drive metadata vẫn cần bật discovery và OAuth consent. PR hay kiểm thử mock không xác nhận đã tìm được project thật.
 
 Nguồn: https://developers.google.com/apps-script/guides/import-export , https://developers.google.com/apps-script/guides/collaborating , https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list , https://developers.google.com/workspace/drive/api/guides/api-specific-auth , https://developers.google.com/apps-script/api/quickstart/nodejs

@@ -318,6 +318,8 @@ const googleWorkspaceApi: GoogleWorkspaceApi = {
   enableProjectDiscovery: () => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.enableProjectDiscovery),
   listProjects: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.listProjects, input ?? {}),
   listContainers: (input) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.listContainers, input ?? {}),
+  resolveScriptReference: (reference, containerId) =>
+    ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.resolveScriptReference, reference, containerId),
   checkBoundScript: (scriptId, containerId) =>
     ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.checkBoundScript, scriptId, containerId),
   scriptProject: (scriptId) => ipcRenderer.invoke(GOOGLE_WORKSPACE_IPC.scriptProject, scriptId),

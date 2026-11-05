@@ -150,7 +150,7 @@ describe("Bound Apps Script container discovery (read-only)", () => {
     await expect(f.manager.checkBoundAppsScript("bad", SHEET_ID))
       .rejects.toThrow(/Invalid Apps Script project ID/);
     await expect(f.manager.checkBoundAppsScript(SCRIPT_ID, "bad"))
-      .rejects.toThrow(/Invalid Google Sheets\/Docs container ID/);
+      .rejects.toThrow(/Invalid Google Workspace container ID/);
     expect(f.fetcher).toHaveBeenCalledTimes(3);
     await f.manager.shutdown();
   });

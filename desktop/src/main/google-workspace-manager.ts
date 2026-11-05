@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { EncryptedSecretStore } from "./secure-store";
 import { McpExtensionOAuthManager } from "./mcp-extension-oauth";
 import type { McpExtensionClient } from "./mcp-extension-client";
+import { parseAppsScriptReference } from "../shared/apps-script-reference";
 
 const GOOGLE_CONNECTION_ID = "google-workspace";
 const CLIENT_ID_KEY = "google-workspace:client-id";
@@ -15,6 +16,8 @@ const SCRIPT_MIME_TYPE = "application/vnd.google-apps.script";
 const CONTAINER_MIME_TYPES = {
   "application/vnd.google-apps.spreadsheet": "sheet",
   "application/vnd.google-apps.document": "doc",
+  "application/vnd.google-apps.presentation": "slide",
+  "application/vnd.google-apps.form": "form",
 } as const;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -62,7 +65,7 @@ export interface AppsScriptContainerListInput extends AppsScriptProjectListInput
 export interface AppsScriptContainerSummary {
   containerId: string;
   name: string;
-  kind: "sheet" | "doc";
+  kind: "sheet" | "doc" | "slide" | "form";
   modifiedTime: string | null;
   editorUrl: string;
 }
@@ -78,6 +81,16 @@ export interface AppsScriptBoundCheck {
   scriptTitle: string | null;
   editorUrl: string;
   match: "verified" | "mismatch" | "unconfirmed";
+}
+/** Metadata-only identity lookup for a user-supplied project ID or Editor URL. */
+export interface AppsScriptResolvedReference {
+  scriptId: string;
+  scriptTitle: string | null;
+  modifiedTime: string | null;
+  editorUrl: string;
+  containerId: string | null;
+  /** Null means no container was selected; unconfirmed means Google omitted parentId. */
+  match: "verified" | "mismatch" | "unconfirmed" | null;
 }
 export interface AppsScriptFile {
   name: string;
@@ -357,7 +370,7 @@ export class GoogleWorkspaceManager {
   }
 
   /**
-   * Enumerate possible parent Sheets/Docs from Drive metadata. This DOES NOT
+   * Enumerate possible parent Sheets/Docs/Slides/Forms from Drive metadata. This DOES NOT
    * imply a document contains a bound script: Google does not expose a
    * reverse listing of container-bound script IDs. No content is fetched.
    */
@@ -411,9 +424,7 @@ export class GoogleWorkspaceManager {
         name: file.name,
         kind: CONTAINER_MIME_TYPES[file.mimeType],
         modifiedTime: file.modifiedTime ?? null,
-        editorUrl: file.mimeType === "application/vnd.google-apps.spreadsheet"
-          ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(file.id)}/edit`
-          : `https://docs.google.com/document/d/${encodeURIComponent(file.id)}/edit`,
+        editorUrl: containerEditorUrl(file.mimeType, file.id),
       })),
       nextPageToken: data.nextPageToken ?? null,
       incompleteSearch: data.incompleteSearch === true,
@@ -422,23 +433,42 @@ export class GoogleWorkspaceManager {
   }
 
   /**
-   * Check a user-provided Script ID against a selected container. Some Google
-   * projects.get responses omit parentId: report unconfirmed, never infer a
-   * match from a title, owner, or Drive search result.
+   * Read Apps Script metadata for a real user-provided project ID or Editor URL.
+   * Never request the pasted URL: only an allowlisted ID is sent to the fixed
+   * https://script.googleapis.com/v1/projects/{scriptId} endpoint.
    */
-  async checkBoundAppsScript(scriptId: string, containerId: string): Promise<AppsScriptBoundCheck> {
-    scriptPath(scriptId);
-    if (!validDriveId(containerId)) throw new Error("Invalid Google Sheets/Docs container ID");
+  async resolveAppsScriptReference(
+    reference: string, containerId?: string,
+  ): Promise<AppsScriptResolvedReference> {
+    const scriptId = parseAppsScriptReference(reference);
+    if (!scriptId) throw new Error("Invalid Apps Script ID or Editor URL");
+    if (containerId !== undefined && !validDriveId(containerId)) {
+      throw new Error("Invalid Google Workspace container ID");
+    }
     const project = await this.getAppsScriptProject(scriptId);
     if (project.scriptId !== scriptId) throw new Error("Apps Script returned a different project ID");
     const parent = project.parentId;
     return {
       scriptId,
-      containerId,
-      scriptTitle: typeof project.title === "string" ? project.title : null,
+      scriptTitle: safeProjectTitle(project.title),
+      modifiedTime: safeProjectTime(project.updateTime),
       editorUrl: `https://script.google.com/d/${encodeURIComponent(scriptId)}/edit`,
-      match: parent === containerId ? "verified" :
+      containerId: containerId ?? null,
+      match: containerId === undefined ? null : parent === containerId ? "verified" :
         (typeof parent === "string" && validDriveId(parent) ? "mismatch" : "unconfirmed"),
+    };
+  }
+
+  /** Known Script IDs can be checked directly without exposing other parent IDs. */
+  async checkBoundAppsScript(scriptId: string, containerId: string): Promise<AppsScriptBoundCheck> {
+    scriptPath(scriptId);
+    const resolved = await this.resolveAppsScriptReference(scriptId, containerId);
+    return {
+      scriptId: resolved.scriptId,
+      containerId,
+      scriptTitle: resolved.scriptTitle,
+      editorUrl: resolved.editorUrl,
+      match: resolved.match as "verified" | "mismatch" | "unconfirmed",
     };
   }
 
@@ -885,6 +915,20 @@ export function scriptPath(scriptId: string): string {
   return "/" + encodeURIComponent(scriptId);
 }
 
+function containerEditorUrl(mime: keyof typeof CONTAINER_MIME_TYPES, id: string): string {
+  const path = mime === "application/vnd.google-apps.spreadsheet" ? "spreadsheets" :
+    mime === "application/vnd.google-apps.document" ? "document" :
+    mime === "application/vnd.google-apps.presentation" ? "presentation" : "forms";
+  return `https://docs.google.com/${path}/d/${encodeURIComponent(id)}/edit`;
+}
+function safeProjectTitle(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= 512 &&
+    !/[\r\n\0]/.test(value) ? value : null;
+}
+function safeProjectTime(value: unknown): string | null {
+  return typeof value === "string" && value.length <= 64 &&
+    !Number.isNaN(Date.parse(value)) ? value : null;
+}
 interface DriveScriptMetadata {
   id: string;
   name: string;
