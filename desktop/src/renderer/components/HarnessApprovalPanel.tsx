@@ -34,8 +34,13 @@ export function HarnessApprovalPanel({ runId: selectedRunId }: { runId?: string 
   }
 
   async function respond(approval: DesktopHarnessApprovalView, decision: HarnessApprovalDecision): Promise<void> {
-    const label = decision === "allow" ? "Allow once" : "Deny";
-    if (!window.confirm(`${label} ${approval.tool}?\n\nRun: ${approval.runId}\nWorkspace: ${approval.workspace}\nHEAD: ${approval.headSha}${approval.externalRequestId ? `\nNative request: ${approval.externalRequestId}` : ""}\nArguments SHA-256: ${approval.argumentSha256}\n\nApproval is bound to this exact execution intent.`)) return;
+    const label = decision === "allow_run" ? "Allow this tool up to 12 times in this run (5 minutes)" :
+      decision === "allow" ? "Allow once" : "Deny";
+    if (decision === "allow_run" && approval.canAllowRun !== true) return;
+    const scopeNote = decision === "allow_run"
+      ? "Scope: same tool, run, workspace, capability and Git HEAD. Up to 12 executions within 5 minutes. Push, merge, privileged commands and provider creation remain exact-only."
+      : "Approval is bound to this exact execution intent.";
+    if (!window.confirm(`${label} ${approval.tool}?\n\nRun: ${approval.runId}\nWorkspace: ${approval.workspace}\nHEAD: ${approval.headSha}${approval.externalRequestId ? `\nNative request: ${approval.externalRequestId}` : ""}\nArguments SHA-256: ${approval.argumentSha256}\n\n${scopeNote}`)) return;
     setBusy(approval.id);
     setError(null);
     setNotice(null);
@@ -45,9 +50,11 @@ export function HarnessApprovalPanel({ runId: selectedRunId }: { runId?: string 
     });
     if (result.ok) {
       setApprovals((items) => items.filter((item) => item.id !== approval.id));
-      setNotice(decision === "allow"
-        ? `${approval.tool} allowed once. The waiting Codex request will resume only if the exact run, workspace, HEAD and argument digest still match.`
-        : `${approval.tool} denied for this execution intent.`);
+      setNotice(decision === "allow_run"
+        ? `${approval.tool} allowed for this run: at most 12 same-tool executions within 5 minutes, bound to workspace, capability and HEAD.`
+        : decision === "allow"
+          ? `${approval.tool} allowed once. The waiting Codex request will resume only if the exact run, workspace, HEAD and argument digest still match.`
+          : `${approval.tool} denied for this execution intent.`);
     } else setError(result.error.message);
     setBusy(null);
   }
@@ -55,7 +62,9 @@ export function HarnessApprovalPanel({ runId: selectedRunId }: { runId?: string 
   return (
     <Panel title="Harness approvals" eyebrow="Human-in-the-loop">
       <p className="muted">
-        Review pending ASK decisions for a durable Harness run. SourceNerve binds each decision to the exact tool, workspace, Git HEAD and argument digest; Allow is one-shot and does not weaken task or provider guards.
+        Review pending ASK decisions for a durable Harness run. Allow once stays exact;
+        the optional Allow for run grant is explicit, short-lived, same-tool only and
+        never available for shell execution, push, merge or irreversible actions.
       </p>
       <div className="form-row">
         {selectedRunId ? (
@@ -101,6 +110,11 @@ export function HarnessApprovalPanel({ runId: selectedRunId }: { runId?: string 
                 <ActionButton onClick={() => void respond(approval, "allow")} disabled={busy !== null}>
                   Allow once
                 </ActionButton>
+                {approval.canAllowRun === true ? (
+                  <ActionButton onClick={() => void respond(approval, "allow_run")} disabled={busy !== null}>
+                    Allow for run (12 uses / 5 min)
+                  </ActionButton>
+                ) : null}
                 <ActionButton onClick={() => void respond(approval, "deny")} disabled={busy !== null}>
                   Deny
                 </ActionButton>

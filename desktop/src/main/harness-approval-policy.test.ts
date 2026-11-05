@@ -22,8 +22,10 @@ describe("Harness approval Desktop IPC policy", () => {
     expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.list, [{ runId: "run-1", limit: 201 }])).toMatch(/invalid/);
   });
 
-  it("accepts only allow or deny for one bounded approval id", () => {
+  it("accepts allow, explicit bounded allow_run, or deny for one bounded approval id", () => {
     expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [{ approvalId: "approval-1", decision: "deny" }])).toBeNull();
+    expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [{ approvalId: "approval-1", decision: "allow_run" }])).toBeNull();
+    expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [{ approvalId: "approval-1", decision: "allow_tool" }])).toMatch(/invalid/);
     expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [{ approvalId: "approval-1", decision: "approve" }])).toMatch(/invalid/);
     expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [{ approvalId: "approval-1", decision: "allow", rawArgs: {} }])).toMatch(/invalid/);
     expect(validateHarnessApprovalIpcInvocation(HARNESS_APPROVAL_IPC.respond, [])).toMatch(/invalid/);

@@ -34,6 +34,9 @@ function parseHarnessApproval(value: unknown): DesktopHarnessApprovalView {
   const resolvedAt = optionalNonNegativeInteger(record.resolved_at, "resolved_at");
   const consumedAt = optionalNonNegativeInteger(record.consumed_at, "consumed_at");
   const externalRequestId = optionalBoundedString(record.external_request_id, 128, "external request id");
+  if (record.can_allow_run !== undefined && typeof record.can_allow_run !== "boolean") {
+    throw new Error("Harness approval run scope eligibility is invalid");
+  }
   return {
     id,
     runId,
@@ -45,6 +48,7 @@ function parseHarnessApproval(value: unknown): DesktopHarnessApprovalView {
     status,
     requestedAt,
     expiresAt,
+    ...(record.can_allow_run !== undefined ? { canAllowRun: record.can_allow_run as boolean } : {}),
     ...(resolvedAt !== undefined ? { resolvedAt } : {}),
     ...(consumedAt !== undefined ? { consumedAt } : {}),
     ...(externalRequestId !== undefined ? { externalRequestId } : {}),

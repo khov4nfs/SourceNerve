@@ -7,11 +7,16 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     harness::{self, HarnessRunIdRequest},
-    mcp_gateway,
     service::AppState,
 };
 
 pub const APPROVAL_TTL_SECONDS: i64 = 5 * 60;
+/// Humans may return to a pending request after a long ChatGPT turn. The
+/// request remains bound to its exact run, workspace, capability, arguments,
+/// and Git HEAD. A granted permission still lives for only five minutes.
+const PENDING_APPROVAL_TTL_SECONDS: i64 = 12 * 60 * 60;
+/// Native OS permission prompts require immediate foreground consent.
+const NATIVE_PENDING_APPROVAL_TTL_SECONDS: i64 = 5 * 60;
 /// Explicit run-scoped approval is bounded to one tool + capability + Git HEAD.
 const MAX_RUN_SCOPE_USES: i64 = 12;
 const DEFAULT_LIST_LIMIT: usize = 100;
@@ -62,6 +67,8 @@ pub struct HarnessApprovalView {
     pub status: String,
     pub approval_scope: String,
     pub uses_remaining: i64,
+    /// True only when an explicit, bounded same-tool run grant is available.
+    pub can_allow_run: bool,
     pub requested_execution_id: Option<String>,
     pub requested_at: i64,
     pub expires_at: i64,
@@ -122,6 +129,8 @@ fn default_list_limit() -> usize {
 }
 
 fn row_to_view(row: ApprovalDbRow) -> HarnessApprovalView {
+    let can_allow_run =
+        !row.capability_id.starts_with("mcp.") && eligible_for_run_scope(&row.tool_name);
     HarnessApprovalView {
         id: row.id,
         run_id: row.run_id,
@@ -135,6 +144,7 @@ fn row_to_view(row: ApprovalDbRow) -> HarnessApprovalView {
         status: row.status,
         approval_scope: row.approval_scope,
         uses_remaining: row.uses_remaining,
+        can_allow_run,
         requested_execution_id: row.requested_execution_id,
         requested_at: row.requested_at,
         expires_at: row.expires_at,
@@ -284,7 +294,7 @@ pub(crate) async fn request_pending(
     .bind(&intent.head_sha)
     .bind(execution_id)
     .bind(external_request_id)
-    .bind(APPROVAL_TTL_SECONDS)
+    .bind(pending_approval_ttl(&intent.tool))
     .execute(&mut *tx)
     .await?;
     append_event_tx(
@@ -300,7 +310,7 @@ pub(crate) async fn request_pending(
             "argument_sha256": intent.argument_sha256,
             "workspace": intent.workspace,
             "head_sha": intent.head_sha,
-            "expires_in_seconds": APPROVAL_TTL_SECONDS,
+            "expires_in_seconds": pending_approval_ttl(&intent.tool),
         }),
     )
     .await?;
@@ -383,34 +393,32 @@ pub(crate) async fn consume_matching(
 
 /// Broad grants are never valid for raw command/sandbox or native OS
 /// permission prompts. Those always stay exact, one-shot requests.
-fn eligible_for_run_scope(tool: &str) -> bool {
-    if matches!(
-        tool,
-        "workspace_exec"
-            | "workspace_process_start"
-            | "codex_native_command_execution"
-            | "codex_native_permissions"
-    ) {
-        return false;
+fn pending_approval_ttl(tool: &str) -> i64 {
+    // Arbitrary commands and OS permissions require contemporaneous consent.
+    if tool.starts_with("codex_native_")
+        || matches!(tool, "workspace_exec" | "workspace_process_start")
+    {
+        NATIVE_PENDING_APPROVAL_TTL_SECONDS
+    } else {
+        PENDING_APPROVAL_TTL_SECONDS
     }
-    // Irreversible Git/provider actions always require exact confirmation.
-    !tool.split(['_', '-']).any(|word| {
-        matches!(
-            word,
-            "merge"
-                | "push"
-                | "delete"
-                | "remove"
-                | "reset"
-                | "revoke"
-                | "deploy"
-                | "publish"
-                | "drop"
-                | "erase"
-                | "destroy"
-                | "transfer"
-        )
-    })
+}
+
+fn eligible_for_run_scope(tool: &str) -> bool {
+    // Positive allowlist: a new first-party tool is *not* automatically
+    // eligible for a broader grant merely because its name lacks a dangerous
+    // verb. All entries still enforce workspace/HEAD/concurrency guards.
+    matches!(
+        tool,
+        "workspace_file_write"
+            | "workspace_file_put"
+            | "patch_apply"
+            | "task_apply_patch"
+            | "git_branch_checkout"
+            | "task_branch_checkout"
+            | "git_commit"
+            | "task_git_commit"
+    )
 }
 
 #[derive(Debug)]
@@ -1044,44 +1052,14 @@ pub async fn list(
     })
 }
 
-/// Extension capability names come from the immutable Harness snapshot, not
-/// from user arguments. Sensitive extension mutations may never inherit a
-/// broader run grant, even through the stable MCP bridge.
+/// Run-scoped grants are available only to eligible first-party Harness
+/// operations. MCP extensions have a separate resource-bound allow_tool path,
+/// and provider mutations must keep exact approval.
 async fn eligible_for_scoped_approval(
-    state: &AppState,
+    _state: &AppState,
     approval: &HarnessApprovalView,
 ) -> AppResult<bool> {
-    if !eligible_for_run_scope(&approval.tool) {
-        return Ok(false);
-    }
-    if !approval.capability_id.starts_with("mcp.") {
-        return Ok(true);
-    }
-    let snapshot: Option<String> =
-        sqlx::query_scalar("SELECT capability_snapshot_json FROM harness_runs WHERE id=?1")
-            .bind(&approval.run_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let Some(snapshot) = snapshot else {
-        return Ok(false);
-    };
-    let snapshot: serde_json::Value =
-        serde_json::from_str(&snapshot).map_err(anyhow::Error::from)?;
-    let Some(tool) = snapshot
-        .get("capabilities")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|capabilities| {
-            capabilities.iter().find(|capability| {
-                capability.get("id").and_then(serde_json::Value::as_str)
-                    == Some(approval.capability_id.as_str())
-            })
-        })
-        .and_then(|capability| capability.get("name"))
-        .and_then(serde_json::Value::as_str)
-    else {
-        return Ok(false);
-    };
-    Ok(mcp_gateway::eligible_for_tool_scope(tool))
+    Ok(!approval.capability_id.starts_with("mcp.") && eligible_for_run_scope(&approval.tool))
 }
 
 pub async fn respond(
@@ -1138,7 +1116,7 @@ pub async fn respond(
         "UPDATE harness_approvals \
          SET status=?1, resolved_by=?2, resolved_at=unixepoch(), \
              approval_scope=?3, uses_remaining=?4, \
-             expires_at=CASE WHEN ?3='run' THEN unixepoch()+?5 ELSE expires_at END \
+             expires_at=CASE WHEN ?1='allowed' THEN unixepoch()+?5 ELSE expires_at END \
          WHERE id=?6 AND status='pending' AND expires_at > unixepoch()",
     )
     .bind(target_status)
@@ -1181,6 +1159,48 @@ pub async fn respond(
         approval: load(state, &request.approval_id).await?,
         replayed: false,
     })
+}
+
+#[cfg(test)]
+mod scoped_approval_window_tests {
+    use super::*;
+
+    #[test]
+    fn long_pending_window_never_applies_to_shell_or_native_permission() {
+        assert_eq!(pending_approval_ttl("git_branch_checkout"), 12 * 60 * 60);
+        assert_eq!(pending_approval_ttl("workspace_file_write"), 12 * 60 * 60);
+        assert_eq!(pending_approval_ttl("workspace_exec"), 5 * 60);
+        assert_eq!(pending_approval_ttl("workspace_process_start"), 5 * 60);
+        assert_eq!(pending_approval_ttl("codex_native_permissions"), 5 * 60);
+        assert_eq!(
+            pending_approval_ttl("codex_native_command_execution"),
+            5 * 60
+        );
+    }
+
+    #[test]
+    fn broader_grants_reject_shell_provider_creation_and_irreversible_git() {
+        assert!(eligible_for_run_scope("git_branch_checkout"));
+        assert!(eligible_for_run_scope("workspace_file_write"));
+        assert!(eligible_for_run_scope("git_commit"));
+        for tool in [
+            "workspace_exec",
+            "workspace_process_start",
+            "git_commit_push",
+            "github_pull_merge",
+            "github_pull_create",
+            "github_comment_create",
+            "task_provider_pull_create",
+            "task_github_pull_create",
+            "github_issue_create",
+            "codex_native_permissions",
+            "apps_script_delete_content",
+            "task_release_publish",
+            "desktop-control__click_screen",
+        ] {
+            assert!(!eligible_for_run_scope(tool), "{tool}");
+        }
+    }
 }
 
 #[cfg(test)]

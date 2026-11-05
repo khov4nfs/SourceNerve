@@ -6,7 +6,7 @@ export const HARNESS_APPROVAL_IPC = {
 } as const;
 
 export type HarnessApprovalStatus = "pending" | "allowed" | "denied" | "consumed" | "expired";
-export type HarnessApprovalDecision = "allow" | "deny";
+export type HarnessApprovalDecision = "allow" | "allow_run" | "deny";
 
 export interface DesktopHarnessApprovalView {
   id: string;
@@ -19,6 +19,8 @@ export interface DesktopHarnessApprovalView {
   status: HarnessApprovalStatus;
   requestedAt: number;
   expiresAt: number;
+  /** Server-authoritative: run-scoped grants are never offered for sensitive actions. */
+  canAllowRun?: boolean;
   resolvedAt?: number;
   consumedAt?: number;
   externalRequestId?: string;

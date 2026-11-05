@@ -2002,7 +2002,15 @@ async fn run_scope_never_authorizes_privileged_exec_or_irreversible_git() {
     )
     .await
     .expect("begin");
-    for tool in ["workspace_exec", "git_push", "github_pull_merge"] {
+    for tool in [
+        "workspace_exec",
+        "workspace_process_start",
+        "git_push",
+        "git_commit_push",
+        "github_pull_merge",
+        "github_pull_create",
+        "task_provider_pull_create",
+    ] {
         let (approval, _) = harness_approval::request_pending(
             &state,
             &harness_approval::ApprovalIntent {
@@ -2023,6 +2031,10 @@ async fn run_scope_never_authorizes_privileged_exec_or_irreversible_git() {
         )
         .await
         .expect("request");
+        assert!(
+            !approval.can_allow_run,
+            "{tool} must not offer run consent in Desktop"
+        );
         let error = harness_approval::respond(
             &state,
             harness_approval::HarnessApprovalRespondRequest {
@@ -2036,6 +2048,59 @@ async fn run_scope_never_authorizes_privileged_exec_or_irreversible_git() {
         .expect_err("privileged actions require exact consent");
         assert!(error.to_string().contains("exact allow"), "{tool}");
     }
+}
+
+#[tokio::test]
+async fn long_pending_approval_resets_to_short_lived_one_shot_grant() {
+    let (_root, _repo, _state_dir, state) = fixture().await;
+    let begun = harness::begin(
+        &state,
+        begin_request("harness:approval-long-pending"),
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("begin");
+    let (pending, _) = harness_approval::request_pending(
+        &state,
+        &harness_approval::ApprovalIntent {
+            run_id: begun.snapshot.run.id,
+            principal_id: harness::operator_principal_key().into(),
+            workspace: "harness".into(),
+            tool: "git_branch_checkout".into(),
+            capability_id: "core.git.mutate".into(),
+            argument_sha256: "f".repeat(64),
+            head_sha: begun.snapshot.run.base_head,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect("new pending");
+    assert!(pending.can_allow_run);
+    assert!(pending.expires_at - pending.requested_at >= 12 * 60 * 60 - 2);
+    // Simulate the user returning near the end of their original approval
+    // window. Consent must grant five fresh minutes, not a 12-hour token.
+    sqlx::query("UPDATE harness_approvals SET expires_at=unixepoch()+15 WHERE id=?1")
+        .bind(&pending.id)
+        .execute(&state.db)
+        .await
+        .expect("near expiry");
+    let allowed = harness_approval::respond(
+        &state,
+        harness_approval::HarnessApprovalRespondRequest {
+            approval_id: pending.id,
+            decision: "allow".into(),
+        },
+        harness::operator_principal_key(),
+        true,
+    )
+    .await
+    .expect("allow old pending request");
+    assert_eq!(allowed.approval.approval_scope, "exact");
+    assert_eq!(allowed.approval.uses_remaining, 1);
+    assert!(allowed.approval.expires_at - allowed.approval.resolved_at.unwrap_or_default() >= 299);
+    assert!(allowed.approval.expires_at - allowed.approval.resolved_at.unwrap_or_default() <= 301);
 }
 
 #[tokio::test]
