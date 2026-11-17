@@ -22,7 +22,6 @@ use tokio::sync::Mutex;
 
 const CLOUDFLARE_API_BASE: &str = "https://api.cloudflare.com/client/v4";
 const LOCAL_ORIGIN_SERVICE: &str = "http://127.0.0.1:7331";
-const LOCAL_ORIGIN_HOST_HEADER: &str = "sourcenerve.fogewise.io.vn";
 const MAX_CLOUDFLARE_RESPONSE_BYTES: usize = 1024 * 1024;
 const MUTATION_RATE_LIMIT: usize = 10;
 const MUTATION_RATE_WINDOW: Duration = Duration::from_secs(60 * 60);
@@ -671,7 +670,7 @@ impl CloudflareClient {
                                 "hostname": hostname,
                                 "service": LOCAL_ORIGIN_SERVICE,
                                 "originRequest": {
-                                    "httpHostHeader": LOCAL_ORIGIN_HOST_HEADER
+                                    "httpHostHeader": hostname
                                 }
                             },
                             {

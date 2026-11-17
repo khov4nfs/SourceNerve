@@ -1,4 +1,5 @@
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
+import path from "node:path";
 
 import type { DesktopBootstrapState } from "./bootstrap";
 import type { DaemonLaunchPlan } from "./daemon-manager";
@@ -8,6 +9,19 @@ import { resolveManagedStateDirectory } from "./state-location";
 import { loadWorkspaceRegistry } from "./workspace-store";
 
 const OPENAI_APPS_CHALLENGE_ENV = "SOURCENERVE_OPENAI_APPS_CHALLENGE";
+
+async function loadPublicMcpHostname(bootstrap: DesktopBootstrapState): Promise<string | null> {
+  try {
+    const raw = await readFile(path.join(bootstrap.paths.managedDirectory, "public-mcp.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.status === "active" && typeof parsed.hostname === "string" && parsed.hostname.trim()) {
+      return parsed.hostname.trim();
+    }
+  } catch {
+    // Ignore missing or unparseable metadata
+  }
+  return null;
+}
 
 export async function existingDaemonLaunchPlan(
   bootstrap: DesktopBootstrapState,
@@ -37,9 +51,14 @@ export async function existingDaemonLaunchPlan(
       githubToken: credentials.githubToken,
       gitlabToken: credentials.gitlabToken,
     });
+    const publicMcpHostname = await loadPublicMcpHostname(bootstrap);
+    const environment = withPluginChallenge(runtime.environment, credentials.pluginChallengeToken);
+    if (publicMcpHostname) {
+      environment.SOURCENERVE_PUBLIC_MCP_HOSTNAME = publicMcpHostname;
+    }
     return {
       configPath: runtime.configPath,
-      environment: withPluginChallenge(runtime.environment, credentials.pluginChallengeToken),
+      environment,
       redactedSecrets: credentials.redactedSecrets,
     };
   }
@@ -52,14 +71,17 @@ export async function existingDaemonLaunchPlan(
   }
 
   const credentials = await runtimeCredentials(bootstrap);
+  const publicMcpHostname = await loadPublicMcpHostname(bootstrap);
+  const environment = withPluginChallenge({
+    SOURCENERVE_CONFIG: bootstrap.paths.configPath,
+    SOURCENERVE_BEARER_TOKEN: credentials.localBearer,
+    ...(credentials.githubToken ? { SOURCENERVE_GITHUB_TOKEN: credentials.githubToken } : {}),
+    ...(credentials.gitlabToken ? { SOURCENERVE_GITLAB_TOKEN: credentials.gitlabToken } : {}),
+    ...(publicMcpHostname ? { SOURCENERVE_PUBLIC_MCP_HOSTNAME: publicMcpHostname } : {}),
+  }, credentials.pluginChallengeToken);
   return {
     configPath: bootstrap.paths.configPath,
-    environment: withPluginChallenge({
-      SOURCENERVE_CONFIG: bootstrap.paths.configPath,
-      SOURCENERVE_BEARER_TOKEN: credentials.localBearer,
-      ...(credentials.githubToken ? { SOURCENERVE_GITHUB_TOKEN: credentials.githubToken } : {}),
-      ...(credentials.gitlabToken ? { SOURCENERVE_GITLAB_TOKEN: credentials.gitlabToken } : {}),
-    }, credentials.pluginChallengeToken),
+    environment,
     redactedSecrets: credentials.redactedSecrets,
   };
 }

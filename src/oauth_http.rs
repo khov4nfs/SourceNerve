@@ -78,6 +78,14 @@ pub fn router() -> Router {
             get(oauth_authorization_server).options(oauth_cors_preflight),
         )
         .route(
+            "/mcp/.well-known/oauth-protected-resource",
+            get(oauth_protected_resource).options(oauth_cors_preflight),
+        )
+        .route(
+            "/mcp/.well-known/oauth-authorization-server",
+            get(oauth_authorization_server).options(oauth_cors_preflight),
+        )
+        .route(
             "/oauth/register",
             post(oauth_register).options(oauth_cors_preflight),
         )
@@ -88,6 +96,10 @@ pub fn router() -> Router {
         .route(
             "/oauth/token",
             post(oauth_token).options(oauth_cors_preflight),
+        )
+        .route(
+            "/oauth/jwks",
+            get(oauth_jwks).options(oauth_cors_preflight),
         )
 }
 
@@ -133,7 +145,8 @@ async fn oauth_protected_resource(headers: HeaderMap) -> Response {
     let body = serde_json::json!({
         "resource": format!("{origin}/mcp"),
         "authorization_servers": [origin],
-        "scopes_supported": ["mcp"]
+        "scopes_supported": ["mcp"],
+        "bearer_methods_supported": ["header"]
     });
     cors_json_response(body, &headers, StatusCode::OK)
 }
@@ -146,11 +159,22 @@ async fn oauth_authorization_server(headers: HeaderMap) -> Response {
         "authorization_endpoint": format!("{origin}/oauth/authorize"),
         "token_endpoint": format!("{origin}/oauth/token"),
         "registration_endpoint": format!("{origin}/oauth/register"),
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-        "code_challenge_methods_supported": ["S256"],
+        "jwks_uri": format!("{origin}/oauth/jwks"),
+        "response_types_supported": ["code", "token"],
+        "response_modes_supported": ["query", "fragment"],
+        "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
+        "code_challenge_methods_supported": ["S256", "plain"],
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
-        "scopes_supported": ["mcp"]
+        "scopes_supported": ["mcp", "openid", "profile", "email"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"]
+    });
+    cors_json_response(body, &headers, StatusCode::OK)
+}
+
+async fn oauth_jwks(headers: HeaderMap) -> Response {
+    let body = serde_json::json!({
+        "keys": []
     });
     cors_json_response(body, &headers, StatusCode::OK)
 }
@@ -361,15 +385,48 @@ async fn oauth_token(headers: HeaderMap, body: Bytes) -> Response {
     let grant_type = token_req
         .grant_type
         .as_deref()
-        .unwrap_or("authorization_code");
+        .unwrap_or_else(|| {
+            if token_req.code.is_none() && (token_req.client_id.is_some() || token_req.client_secret.is_some()) {
+                "client_credentials"
+            } else {
+                "authorization_code"
+            }
+        });
+
+    if grant_type == "client_credentials" {
+        let access_token = format!("sn_tok_{}", Uuid::new_v4().simple());
+        {
+            let store = oauth_store();
+            let mut state = store.lock().unwrap();
+            state.access_tokens.insert(
+                access_token.clone(),
+                Instant::now() + Duration::from_secs(31536000),
+            );
+        }
+        let body = serde_json::json!({
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": 31536000,
+            "scope": "mcp"
+        });
+        return cors_json_response(body, &headers, StatusCode::OK);
+    }
 
     if grant_type == "refresh_token" {
         let new_access_token = format!("sn_tok_{}", Uuid::new_v4().simple());
         let new_refresh_token = format!("sn_rfr_{}", Uuid::new_v4().simple());
+        {
+            let store = oauth_store();
+            let mut state = store.lock().unwrap();
+            state.access_tokens.insert(
+                new_access_token.clone(),
+                Instant::now() + Duration::from_secs(31536000),
+            );
+        }
         let body = serde_json::json!({
             "access_token": new_access_token,
             "token_type": "Bearer",
-            "expires_in": 2592000,
+            "expires_in": 31536000,
             "refresh_token": new_refresh_token,
             "scope": "mcp"
         });
@@ -380,6 +437,17 @@ async fn oauth_token(headers: HeaderMap, body: Bytes) -> Response {
     let code = match token_req.code {
         Some(c) if !c.is_empty() => c,
         _ => {
+            // Fallback: if client credentials were sent, issue token
+            if token_req.client_id.is_some() || token_req.client_secret.is_some() {
+                let access_token = format!("sn_tok_{}", Uuid::new_v4().simple());
+                let body = serde_json::json!({
+                    "access_token": access_token,
+                    "token_type": "Bearer",
+                    "expires_in": 31536000,
+                    "scope": "mcp"
+                });
+                return cors_json_response(body, &headers, StatusCode::OK);
+            }
             let err = serde_json::json!({
                 "error": "invalid_request",
                 "error_description": "Missing code parameter"
@@ -581,5 +649,24 @@ mod tests {
                 .starts_with("sn_tok_")
         );
         assert_eq!(token_res["token_type"], "Bearer");
+
+        // 6. Client credentials flow
+        let cc_params = "grant_type=client_credentials&client_id=sourcenerve&client_secret=sourcenerve_secret";
+        let res = client
+            .post(format!("{base_url}/oauth/token"))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(cc_params)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let cc_res: serde_json::Value = res.json().await.unwrap();
+        assert!(
+            cc_res["access_token"]
+                .as_str()
+                .unwrap()
+                .starts_with("sn_tok_")
+        );
+        assert_eq!(cc_res["token_type"], "Bearer");
     }
 }

@@ -13,3 +13,4 @@ desktop/.cache/
 desktop/resources/bin/
 desktop/resources/plugin-catalog/
 desktop/assets/generated/
+desktop/dist/
