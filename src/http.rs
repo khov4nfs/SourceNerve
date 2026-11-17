@@ -61,6 +61,13 @@ async fn mcp_middleware(mut request: Request<axum::body::Body>, next: Next) -> R
         _ => HeaderValue::from_static("*"),
     };
 
+    let client_prefers_sse_only = request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.contains("text/event-stream") && !h.contains("application/json") && !h.contains("*/*"))
+        .unwrap_or(false);
+
     // Handle OPTIONS (CORS preflight for gemini.google.com and other web clients)
     if request.method() == Method::OPTIONS {
         let mut response = Response::builder()
@@ -179,6 +186,8 @@ async fn mcp_middleware(mut request: Request<axum::body::Body>, next: Next) -> R
         }
     }
 
+    let is_post_method = request.method() == Method::POST;
+
     // Normalize Host header so internal rmcp host-validation does not reject valid public tunnel routes
     request
         .headers_mut()
@@ -210,6 +219,64 @@ async fn mcp_middleware(mut request: Request<axum::body::Body>, next: Next) -> R
             HeaderValue::from_static("true"),
         );
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+    }
+
+    // If client did not explicitly request SSE-only (e.g. Gemini Web sends Accept: application/json or Accept: application/json, text/event-stream)
+    // but rmcp responded with text/event-stream, unpack the JSON-RPC message from the SSE frame.
+    let is_sse_res = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.contains("text/event-stream"))
+        .unwrap_or(false);
+
+    if is_post_method && !client_prefers_sse_only && is_sse_res {
+        let (parts, body) = response.into_parts();
+        if let Ok(bytes) = axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+            if let Ok(text) = std::str::from_utf8(&bytes) {
+                let mut json_candidate = None;
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if let Some(data) = trimmed.strip_prefix("data:") {
+                        let data = data.trim();
+                        if data.starts_with('{') && data.ends_with('}') {
+                            if data.contains("\"result\"") || data.contains("\"error\"") {
+                                json_candidate = Some(data.to_string());
+                                break;
+                            } else if json_candidate.is_none() {
+                                json_candidate = Some(data.to_string());
+                            }
+                        }
+                    }
+                }
+                if json_candidate.is_none() {
+                    let mut accumulated = String::new();
+                    for line in text.lines() {
+                        let trimmed = line.trim();
+                        if let Some(data) = trimmed.strip_prefix("data:") {
+                            accumulated.push_str(data.trim());
+                        }
+                    }
+                    if accumulated.starts_with('{') && accumulated.ends_with('}') {
+                        json_candidate = Some(accumulated);
+                    }
+                }
+                if let Some(json) = json_candidate {
+                    let mut res = Response::from_parts(parts, axum::body::Body::from(json));
+                    let h = res.headers_mut();
+                    h.insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/json"),
+                    );
+                    h.remove(header::CACHE_CONTROL);
+                    h.remove("x-accel-buffering");
+                    return res;
+                }
+            }
+            response = Response::from_parts(parts, axum::body::Body::from(bytes));
+        } else {
+            response = Response::from_parts(parts, axum::body::Body::empty());
+        }
     }
 
     response
@@ -572,12 +639,12 @@ mod tests {
         assert_eq!(body["status"], "ok");
         assert_eq!(body["protocol"], "mcp");
 
-        // 4. POST initialize with Accept: application/json
+        // 4. POST initialize with Accept: application/json, text/event-stream (standard Streamable HTTP client)
         let res = client
             .post(&mcp_url)
             .header("Origin", "https://gemini.google.com")
             .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
+            .header("Accept", "application/json, text/event-stream")
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -596,5 +663,53 @@ mod tests {
             res.headers().get("access-control-allow-origin").unwrap(),
             "https://gemini.google.com"
         );
+        let session_id = res
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let ct = res
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(ct.contains("application/json"), "Expected application/json for init, got {ct}");
+        let init_res: serde_json::Value = res.json().await.expect("parse init json");
+        assert_eq!(init_res["jsonrpc"], "2.0");
+        assert!(init_res["result"].is_object());
+
+        // 5. POST tools/list
+        let mut req = client
+            .post(&mcp_url)
+            .header("Origin", "https://gemini.google.com")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream");
+        if let Some(ref sid) = session_id {
+            req = req.header("Mcp-Session-Id", sid);
+        }
+        let res = req
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .send()
+            .await
+            .expect("send post tools/list");
+        let status = res.status();
+        let ct = res
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body_text = res.text().await.unwrap_or_default();
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert!(ct.contains("application/json"), "Expected application/json for tools/list, got {ct}");
+        let list_res: serde_json::Value = serde_json::from_str(&body_text).expect("parse tools/list json");
+        assert_eq!(list_res["jsonrpc"], "2.0");
+        assert_eq!(list_res["id"], 2);
+        assert!(list_res["result"]["tools"].is_array());
     }
 }
