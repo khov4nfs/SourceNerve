@@ -65,7 +65,9 @@ async fn mcp_middleware(mut request: Request<axum::body::Body>, next: Next) -> R
         .headers()
         .get(header::ACCEPT)
         .and_then(|h| h.to_str().ok())
-        .map(|h| h.contains("text/event-stream") && !h.contains("application/json") && !h.contains("*/*"))
+        .map(|h| {
+            h.contains("text/event-stream") && !h.contains("application/json") && !h.contains("*/*")
+        })
         .unwrap_or(false);
 
     // Handle OPTIONS (CORS preflight for gemini.google.com and other web clients)
@@ -673,7 +675,10 @@ mod tests {
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        assert!(ct.contains("application/json"), "Expected application/json for init, got {ct}");
+        assert!(
+            ct.contains("application/json"),
+            "Expected application/json for init, got {ct}"
+        );
         let init_res: serde_json::Value = res.json().await.expect("parse init json");
         assert_eq!(init_res["jsonrpc"], "2.0");
         assert!(init_res["result"].is_object());
@@ -706,8 +711,12 @@ mod tests {
             .to_string();
         let body_text = res.text().await.unwrap_or_default();
         assert_eq!(status, reqwest::StatusCode::OK);
-        assert!(ct.contains("application/json"), "Expected application/json for tools/list, got {ct}");
-        let list_res: serde_json::Value = serde_json::from_str(&body_text).expect("parse tools/list json");
+        assert!(
+            ct.contains("application/json"),
+            "Expected application/json for tools/list, got {ct}"
+        );
+        let list_res: serde_json::Value =
+            serde_json::from_str(&body_text).expect("parse tools/list json");
         assert_eq!(list_res["jsonrpc"], "2.0");
         assert_eq!(list_res["id"], 2);
         assert!(list_res["result"]["tools"].is_array());
