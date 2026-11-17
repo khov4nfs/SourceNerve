@@ -287,7 +287,8 @@ pub fn router(
                 async move { public_readiness(state).await }
             }),
         )
-        .merge(publication_http::router());
+        .merge(publication_http::router())
+        .merge(crate::oauth_http::router());
     if observability::metrics_public() {
         public = public.merge(crate::observability_http::public_router());
     }
@@ -326,7 +327,7 @@ fn safe_public_host(value: &str) -> Option<&str> {
     Some(value)
 }
 
-fn public_origin(headers: &HeaderMap) -> String {
+pub(crate) fn public_origin(headers: &HeaderMap) -> String {
     let scheme = safe_forwarded_value(headers, "x-forwarded-proto")
         .filter(|value| matches!(*value, "http" | "https"))
         .unwrap_or("http");
