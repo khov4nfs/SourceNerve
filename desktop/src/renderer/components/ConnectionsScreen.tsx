@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Cable,
+  Check,
+  Copy,
   GitBranch,
   RefreshCw,
   RotateCcw,
@@ -268,8 +270,23 @@ function PublicMcpRow({
   busy: string | null;
   onAction(action: "enroll" | "retry" | "rotate" | "revoke" | "re-enroll"): void;
 }) {
-  const publicUrl = publicMcp.publicMcpUrl ?? (publicMcp.hostname ? `https://${publicMcp.hostname}/mcp` : null);
+  const [copied, setCopied] = useState(false);
+  const cleanPublicUrl = publicMcp.hostname
+    ? `https://${publicMcp.hostname}/mcp`
+    : (publicMcp.publicMcpUrl ? publicMcp.publicMcpUrl.split("?")[0] : null);
+  const displayUrl = cleanPublicUrl ?? publicMcp.publicMcpUrl;
   const disabled = Boolean(busy);
+
+  const handleCopy = async () => {
+    if (!cleanPublicUrl) return;
+    try {
+      await navigator.clipboard.writeText(cleanPublicUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback if clipboard API is restricted
+    }
+  };
 
   const attentionMessage = publicMcp.state === "degraded" || publicMcp.state === "offline"
     ? publicMcp.message
@@ -280,7 +297,7 @@ function PublicMcpRow({
       <ConnectionRow
         icon={<Cable className="size-4" aria-hidden="true" />}
         title="Public MCP"
-        subtitle={publicUrl ?? "Not configured"}
+        subtitle={displayUrl ?? "Not configured"}
         status={<StatusPill dot tone={publicMcpTone(publicMcp)}>{publicMcpLabel(publicMcp)}</StatusPill>}
         actions={publicMcp.state === "not-enrolled" ? (
           <ActionButton size="sm" disabled={disabled} onClick={() => onAction("enroll")}>
@@ -294,6 +311,27 @@ function PublicMcpRow({
           </ActionButton>
         ) : (
           <>
+            {cleanPublicUrl ? (
+              <ActionButton
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                onClick={handleCopy}
+                title="Copy MCP Server URL for Gemini / ChatGPT"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-3.5 text-emerald-500" aria-hidden="true" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3.5" aria-hidden="true" />
+                    Copy URL
+                  </>
+                )}
+              </ActionButton>
+            ) : null}
             <ActionButton variant="ghost" size="sm" disabled={disabled} onClick={() => onAction("retry")}>
               <RefreshCw className={`size-3.5 ${busy === "public-mcp:retry" ? "animate-spin" : ""}`} aria-hidden="true" />
               Check

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderMap, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -48,11 +48,171 @@ async fn auth_middleware(
     }
 }
 
-async fn mcp_no_auth_middleware(mut request: Request<axum::body::Body>, next: Next) -> Response {
+async fn mcp_middleware(mut request: Request<axum::body::Body>, next: Next) -> Response {
     request
         .extensions_mut()
         .insert(crate::principal::Principal::Operator);
-    next.run(request).await
+
+    let origin = request.headers().get(header::ORIGIN).cloned();
+    let allow_origin = match origin.as_ref().and_then(|h| h.to_str().ok()) {
+        Some(o) if !o.is_empty() => {
+            HeaderValue::from_str(o).unwrap_or_else(|_| HeaderValue::from_static("*"))
+        }
+        _ => HeaderValue::from_static("*"),
+    };
+
+    // Handle OPTIONS (CORS preflight for gemini.google.com and other web clients)
+    if request.method() == Method::OPTIONS {
+        let mut response = Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(axum::body::Body::empty())
+            .unwrap_or_default();
+        let headers = response.headers_mut();
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, POST, DELETE, OPTIONS, HEAD"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static(
+                "Authorization, Content-Type, Accept, Mcp-Session-Id, Last-Event-ID, X-Requested-With, Cache-Control, Mcp-Protocol-Version",
+            ),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("Mcp-Session-Id, Content-Type, Mcp-Protocol-Version"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("86400"),
+        );
+        if origin.is_some() {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                HeaderValue::from_static("true"),
+            );
+            headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        return response;
+    }
+
+    // Handle HEAD probe
+    if request.method() == Method::HEAD {
+        let mut response = Response::builder()
+            .status(StatusCode::OK)
+            .body(axum::body::Body::empty())
+            .unwrap_or_default();
+        let headers = response.headers_mut();
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        if origin.is_some() {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                HeaderValue::from_static("true"),
+            );
+            headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        return response;
+    }
+
+    // Handle GET probe when not an established SSE stream
+    if request.method() == Method::GET {
+        let has_session = request.headers().contains_key("mcp-session-id");
+        let has_last_event = request.headers().contains_key("last-event-id");
+        let is_sse_accept = request
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.contains("text/event-stream"))
+            .unwrap_or(false);
+
+        // If client sends GET without session ID, rmcp returns 400 Bad Request: Session ID is required.
+        // Google Gemini and other validators probe GET /mcp to verify endpoint liveness.
+        if !has_session && !has_last_event && !is_sse_accept {
+            let body = serde_json::json!({
+                "status": "ok",
+                "service": "sourcenerve",
+                "protocol": "mcp",
+                "transport": "streamable-http",
+                "version": env!("CARGO_PKG_VERSION")
+            });
+            let mut response = axum::Json(body).into_response();
+            let headers = response.headers_mut();
+            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
+            if origin.is_some() {
+                headers.insert(
+                    header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                    HeaderValue::from_static("true"),
+                );
+                headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+            }
+            return response;
+        }
+
+        // Ensure SSE accept header is set so rmcp doesn't fail with 406
+        if !is_sse_accept {
+            request.headers_mut().insert(
+                header::ACCEPT,
+                HeaderValue::from_static("text/event-stream"),
+            );
+        }
+    }
+
+    // Normalize POST Accept header for rmcp compatibility
+    if request.method() == Method::POST {
+        let needs_accept_fix = request
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| !h.contains("application/json") || !h.contains("text/event-stream"))
+            .unwrap_or(true);
+
+        if needs_accept_fix {
+            request.headers_mut().insert(
+                header::ACCEPT,
+                HeaderValue::from_static("application/json, text/event-stream"),
+            );
+        }
+    }
+
+    // Normalize Host header so internal rmcp host-validation does not reject valid public tunnel routes
+    request
+        .headers_mut()
+        .insert(header::HOST, HeaderValue::from_static("127.0.0.1"));
+
+    // Call rmcp service
+    let mut response = next.run(request).await;
+
+    // Inject CORS headers on response
+    let headers = response.headers_mut();
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, DELETE, OPTIONS, HEAD"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(
+            "Authorization, Content-Type, Accept, Mcp-Session-Id, Last-Event-ID, X-Requested-With, Cache-Control, Mcp-Protocol-Version",
+        ),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("Mcp-Session-Id, Content-Type, Mcp-Protocol-Version"),
+    );
+    if origin.is_some() {
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            HeaderValue::from_static("true"),
+        );
+        headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+    }
+
+    response
 }
 
 fn mcp_server_config() -> StreamableHttpServerConfig {
@@ -114,7 +274,7 @@ pub fn router(
         .route_layer(middleware::from_fn_with_state(api_auth, auth_middleware));
     let public_mcp = Router::new()
         .nest_service("/mcp", mcp_service)
-        .route_layer(middleware::from_fn(mcp_no_auth_middleware));
+        .route_layer(middleware::from_fn(mcp_middleware));
 
     let readiness_state = state.clone();
     let mut public = Router::new()
@@ -337,5 +497,103 @@ mod tests {
         headers.insert(header::HOST, "127.0.0.1:7331".parse().unwrap());
 
         assert_eq!(public_origin(&headers), "https://127.0.0.1:7331");
+    }
+
+    #[tokio::test]
+    async fn mcp_cors_preflight_and_probe_support_gemini() {
+        let state_dir = tempfile::tempdir().expect("state tempdir");
+        let registry = crate::workspace::WorkspaceRegistry::build(&[]).expect("empty registry");
+        let pool = crate::db::connect(state_dir.path()).await.expect("db");
+        let state = AppState {
+            workspaces: registry,
+            db: pool,
+            mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
+            github_token: None,
+        };
+        let app = router(state, "test-bearer".to_string(), None, None, false);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let address = listener.local_addr().expect("local address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve router");
+        });
+
+        let client = reqwest::Client::new();
+        let mcp_url = format!("http://{address}/mcp");
+
+        // 1. OPTIONS preflight from gemini.google.com
+        let res = client
+            .request(reqwest::Method::OPTIONS, &mcp_url)
+            .header("Origin", "https://gemini.google.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,mcp-session-id",
+            )
+            .send()
+            .await
+            .expect("send options");
+        assert_eq!(res.status(), reqwest::StatusCode::NO_CONTENT);
+        assert_eq!(
+            res.headers().get("access-control-allow-origin").unwrap(),
+            "https://gemini.google.com"
+        );
+        assert!(res.headers().contains_key("access-control-allow-methods"));
+        assert!(res.headers().contains_key("access-control-allow-headers"));
+
+        // 2. HEAD probe
+        let res = client
+            .head(&mcp_url)
+            .header("Origin", "https://gemini.google.com")
+            .send()
+            .await
+            .expect("send head");
+        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            res.headers().get("access-control-allow-origin").unwrap(),
+            "https://gemini.google.com"
+        );
+
+        // 3. GET probe without session
+        let res = client
+            .get(&mcp_url)
+            .header("Origin", "https://gemini.google.com")
+            .send()
+            .await
+            .expect("send get");
+        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            res.headers().get("access-control-allow-origin").unwrap(),
+            "https://gemini.google.com"
+        );
+        let body: serde_json::Value = res.json().await.expect("parse json");
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["protocol"], "mcp");
+
+        // 4. POST initialize with Accept: application/json
+        let res = client
+            .post(&mcp_url)
+            .header("Origin", "https://gemini.google.com")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "gemini-test", "version": "1.0" }
+                }
+            }))
+            .send()
+            .await
+            .expect("send post initialize");
+        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            res.headers().get("access-control-allow-origin").unwrap(),
+            "https://gemini.google.com"
+        );
     }
 }
