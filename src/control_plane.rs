@@ -103,6 +103,7 @@ pub fn router(pool: SqlitePool, broker_runtime: desktop_broker::Runtime) -> Rout
             }),
         )
         .merge(publication_http::router())
+        .merge(crate::oauth_http::router())
         .merge(desktop_broker::router(pool, broker_runtime));
 
     if observability::metrics_public() {
