@@ -97,10 +97,7 @@ pub fn router() -> Router {
             "/oauth/token",
             post(oauth_token).options(oauth_cors_preflight),
         )
-        .route(
-            "/oauth/jwks",
-            get(oauth_jwks).options(oauth_cors_preflight),
-        )
+        .route("/oauth/jwks", get(oauth_jwks).options(oauth_cors_preflight))
 }
 
 fn apply_cors(res_headers: &mut HeaderMap, _req_headers: &HeaderMap) {
@@ -382,16 +379,15 @@ async fn oauth_token(headers: HeaderMap, body: Bytes) -> Response {
         token_req.client_secret = basic_secret;
     }
 
-    let grant_type = token_req
-        .grant_type
-        .as_deref()
-        .unwrap_or_else(|| {
-            if token_req.code.is_none() && (token_req.client_id.is_some() || token_req.client_secret.is_some()) {
-                "client_credentials"
-            } else {
-                "authorization_code"
-            }
-        });
+    let grant_type = token_req.grant_type.as_deref().unwrap_or_else(|| {
+        if token_req.code.is_none()
+            && (token_req.client_id.is_some() || token_req.client_secret.is_some())
+        {
+            "client_credentials"
+        } else {
+            "authorization_code"
+        }
+    });
 
     if grant_type == "client_credentials" {
         let access_token = format!("sn_tok_{}", Uuid::new_v4().simple());
@@ -651,7 +647,8 @@ mod tests {
         assert_eq!(token_res["token_type"], "Bearer");
 
         // 6. Client credentials flow
-        let cc_params = "grant_type=client_credentials&client_id=sourcenerve&client_secret=sourcenerve_secret";
+        let cc_params =
+            "grant_type=client_credentials&client_id=sourcenerve&client_secret=sourcenerve_secret";
         let res = client
             .post(format!("{base_url}/oauth/token"))
             .header("Content-Type", "application/x-www-form-urlencoded")
